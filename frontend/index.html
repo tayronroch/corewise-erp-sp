@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CoreWise - Soluções</title>
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+          crossorigin=""/>
+    
+    <!-- Custom CSS for Leaflet -->
+    <style>
+      .leaflet-container {
+        height: 100vh !important;
+        width: 100vw !important;
+        z-index: 1 !important;
+        background: #ffffff !important;
+      }
+      
+      .custom-equipment-icon {
+        border: none !important;
+        background: transparent !important;
+      }
+      
+      .user-location-icon {
+        border: none !important;
+        background: transparent !important;
+      }
+      
+      .new-position-icon {
+        border: none !important;
+        background: transparent !important;
+      }
+
+      /* Remove any debug borders */
+      .leaflet-tile {
+        border: none !important;
+      }
+      
+      .leaflet-layer {
+        opacity: 1 !important;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

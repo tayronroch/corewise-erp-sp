@@ -1,0 +1,221 @@
+{% extends 'mpls_analyzer/base.html' %}
+
+{% block title %}Busca - MPLS Search System{% endblock %}
+
+{% block content %}
+<div class="search-container">
+    <h2><i class="fas fa-search me-2"></i>Busca MPLS</h2>
+    <p class="text-muted">Encontre clientes e equipamentos na sua rede MPLS</p>
+    
+    <div class="card">
+        <div class="card-body">
+            <form method="get">
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="mb-3">
+                            <label for="q" class="form-label">Busca Geral</label>
+                            <input type="text" class="form-control" id="q" name="q" 
+                                   value="{{ query }}" placeholder="Ex: VELOCINET, 3502, lag-11">
+                            <small class="form-text text-muted">
+                                Busca por cliente, VPN ID, interface ou encapsulamento
+                            </small>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="mb-3">
+                            <label for="equipment" class="form-label">Equipamento</label>
+                            <input type="text" class="form-control" id="equipment" name="equipment" 
+                                   value="{{ equipment_filter }}" placeholder="Ex: PI-TERESINA">
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="mb-3">
+                            <label for="location" class="form-label">Localização</label>
+                            <input type="text" class="form-control" id="location" name="location" 
+                                   value="{{ location_filter }}" placeholder="Ex: PI-TERESINA">
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="mb-3">
+                            <label for="service_type" class="form-label">Tipo de Serviço</label>
+                            <select class="form-control" id="service_type" name="service_type">
+                                <option value="">Todos</option>
+                                {% for option in service_type_options %}
+                                    <option value="{{ option }}" {% if option == service_type_filter %}selected{% endif %}>
+                                        {{ option|capfirst }}
+                                    </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="d-flex justify-content-between">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-search me-2"></i>Buscar
+                    </button>
+                    <div>
+                        <a href="{% url 'customer_report_view' %}" class="btn btn-info me-2">
+                            <i class="fas fa-user me-2"></i>Relatório de Cliente
+                        </a>
+                        <a href="{% url 'search' %}" class="btn btn-secondary">
+                            <i class="fas fa-times me-2"></i>Limpar Filtros
+                        </a>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    {% if query or equipment_filter or location_filter or service_type_filter %}
+        <div class="mt-4">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h4>Resultados da Busca</h4>
+                <span class="badge bg-primary">{{ results_count }} resultado{{ results_count|pluralize }}</span>
+            </div>
+            
+            {% if page_obj.object_list %}
+                {% for result in page_obj.object_list %}
+                    <div class="card result-card">
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-md-8">
+                                    <h5 class="card-title">
+                                        <span class="customer-highlight">{{ result.customer_name }}</span>
+                                    </h5>
+                                    <h6 class="text-muted">{{ result.equipment_name }}</h6>
+                                    <p class="card-text">
+                                        <i class="fas fa-map-marker-alt me-2"></i>{{ result.location }}
+                                        <br>
+                                        <i class="fas fa-network-wired me-2"></i>{{ result.equipment_ip }}
+                                        <br>
+                                        <i class="fas fa-sitemap me-2"></i>VPN {{ result.vpn_id }} → {{ result.neighbor_ip }}
+                                        {% if result.neighbor_equipment %}
+                                            <span class="text-success">({{ result.neighbor_equipment }})</span>
+                                        {% endif %}
+                                        <br>
+                                        {% if result.vpws_group_name %}
+                                            <i class="fas fa-users me-2"></i><strong>Destino:</strong> {{ result.vpws_group_name }}
+                                            <br>
+                                        {% endif %}
+                                        {% if result.access_interface %}
+                                            <i class="fas fa-ethernet me-2"></i><strong>Interface:</strong> {{ result.access_interface }}
+                                            {% if result.access_interface_details %}
+                                                <span class="text-muted">({{ result.access_interface_details.type|default:"" }}{% if result.access_interface_details.speed %} - {{ result.access_interface_details.speed }}{% endif %})</span>
+                                                {% if result.access_interface_details.lag_members %}
+                                                    <br>
+                                                    <small class="text-muted ms-4">
+                                                        <i class="fas fa-link me-1"></i>Membros: {{ result.access_interface_details.lag_members|join:", " }}
+                                                    </small>
+                                                {% endif %}
+                                            {% endif %}
+                                            <br>
+                                        {% endif %}
+                                        
+                                        {% if result.opposite_interface_details %}
+                                            <i class="fas fa-exchange-alt me-2"></i><strong>Interface Oposta:</strong> {{ result.opposite_interface_details.name }}
+                                            <span class="text-muted">({{ result.opposite_interface_details.type|default:"" }}{% if result.opposite_interface_details.speed %} - {{ result.opposite_interface_details.speed }}{% endif %})</span>
+                                            {% if result.opposite_interface_details.lag_members %}
+                                                <br>
+                                                <small class="text-muted ms-4">
+                                                    <i class="fas fa-link me-1"></i>Membros: {{ result.opposite_interface_details.lag_members|join:", " }}
+                                                </small>
+                                            {% endif %}
+                                            <br>
+                                        {% endif %}
+                                        {% if result.encapsulation %}
+                                            <i class="fas fa-layer-group me-2"></i><strong>Encapsulamento:</strong> 
+                                            <span class="badge bg-secondary">{{ result.encapsulation_type|default:"untagged"|capfirst }}</span>
+                                            {{ result.encapsulation }}
+                                            <br>
+                                        {% endif %}
+                                        {% if result.vpn_description %}
+                                            <i class="fas fa-comment me-2"></i><strong>Descrição:</strong> {{ result.vpn_description }}
+                                        {% endif %}
+                                    </p>
+                                </div>
+                                <div class="col-md-4 text-end">
+                                    <span class="badge bg-info equipment-badge">{{ result.service_type }}</span>
+                                    {% if result.pw_type %}
+                                        <br>
+                                        <small class="text-muted">PW: {{ result.pw_type }} ({{ result.pw_id }})</small>
+                                    {% endif %}
+                                    <br><br>
+                                    {% if result.last_backup %}
+                                        <small class="text-muted">
+                                            <i class="fas fa-clock me-1"></i>
+                                            Último backup: {{ result.last_backup|date:"d/m/Y H:i" }}
+                                        </small>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                {% endfor %}
+                
+                <!-- Paginação -->
+                {% if page_obj.has_other_pages %}
+                    <nav aria-label="Navegação da busca">
+                        <ul class="pagination justify-content-center">
+                            {% if page_obj.has_previous %}
+                                <li class="page-item">
+                                    <a class="page-link" href="?q={{ query }}&equipment={{ equipment_filter }}&location={{ location_filter }}&service_type={{ service_type_filter }}&page=1">
+                                        Primeira
+                                    </a>
+                                </li>
+                                <li class="page-item">
+                                    <a class="page-link" href="?q={{ query }}&equipment={{ equipment_filter }}&location={{ location_filter }}&service_type={{ service_type_filter }}&page={{ page_obj.previous_page_number }}">
+                                        Anterior
+                                    </a>
+                                </li>
+                            {% endif %}
+                            
+                            <li class="page-item active">
+                                <span class="page-link">
+                                    {{ page_obj.number }} de {{ page_obj.paginator.num_pages }}
+                                </span>
+                            </li>
+                            
+                            {% if page_obj.has_next %}
+                                <li class="page-item">
+                                    <a class="page-link" href="?q={{ query }}&equipment={{ equipment_filter }}&location={{ location_filter }}&service_type={{ service_type_filter }}&page={{ page_obj.next_page_number }}">
+                                        Próxima
+                                    </a>
+                                </li>
+                                <li class="page-item">
+                                    <a class="page-link" href="?q={{ query }}&equipment={{ equipment_filter }}&location={{ location_filter }}&service_type={{ service_type_filter }}&page={{ page_obj.paginator.num_pages }}">
+                                        Última
+                                    </a>
+                                </li>
+                            {% endif %}
+                        </ul>
+                    </nav>
+                {% endif %}
+            {% else %}
+                <div class="alert alert-info">
+                    <i class="fas fa-info-circle me-2"></i>
+                    Nenhum resultado encontrado para os filtros aplicados.
+                </div>
+            {% endif %}
+        </div>
+    {% else %}
+        <div class="mt-4">
+            <div class="alert alert-light">
+                <i class="fas fa-lightbulb me-2"></i>
+                <strong>Dicas de Busca:</strong>
+                <ul class="mb-0 mt-2">
+                    <li>Digite o nome do cliente (ex: VELOCINET, DIGITALNET, ULTRANET)</li>
+                    <li>Busque por VPN ID numérica (ex: 3502, 3651, 634)</li>
+                    <li>Procure por interface (ex: lag-11, ten-gigabit-ethernet-1/1/4)</li>
+                    <li>Busque por tipo de encapsulamento (ex: qinq, vlan)</li>
+                    <li>Use filtros de equipamento para refinar a busca</li>
+                    <li>Busque por localização (ex: PI-TERESINA, MA-TIMON)</li>
+                </ul>
+            </div>
+        </div>
+    {% endif %}
+</div>
+{% endblock %}

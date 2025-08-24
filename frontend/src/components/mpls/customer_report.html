@@ -1,0 +1,561 @@
+{% extends 'mpls_analyzer/base.html' %}
+
+{% block title %}Relatório de Cliente - MPLS Search System{% endblock %}
+
+{% block content %}
+<div class="customer-report-container">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2><i class="fas fa-user me-2"></i>Relatório de Cliente</h2>
+        <div>
+            <button id="export-excel-btn" class="btn btn-success me-2" style="display: none;" title="Exportar para Excel">
+                <i class="fas fa-file-excel me-2"></i>Exportar Excel
+            </button>
+            <a href="{% url 'search' %}" class="btn btn-secondary">
+                <i class="fas fa-arrow-left me-2"></i>Voltar à Busca
+            </a>
+        </div>
+    </div>
+    
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="get" id="customer-report-form">
+                <div class="row">
+                    <div class="col-md-8">
+                        <div class="mb-3">
+                            <label for="customer" class="form-label">Nome do Cliente</label>
+                            <input type="text" class="form-control" id="customer" name="customer" 
+                                   value="{{ customer_name }}" placeholder="Ex: VELOCINET, DIGITALNET">
+                            <small class="form-text text-muted">
+                                Digite o nome do cliente para gerar o relatório detalhado
+                            </small>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="mb-3">
+                            <label class="form-label">&nbsp;</label>
+                            <button type="submit" class="btn btn-primary w-100">
+                                <i class="fas fa-search me-2"></i>Gerar Relatório
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <!-- Área de resultados sempre visível -->
+    <div id="report-results">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h4 id="report-title">Relatório de Cliente</h4>
+            <span class="badge bg-primary" id="total-vpns">0 VPNs</span>
+        </div>
+        
+        <div id="loading" class="text-center py-4" style="display: none;">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Carregando...</span>
+            </div>
+            <p class="mt-2">Gerando relatório...</p>
+        </div>
+        
+        <div id="error-message" class="alert alert-danger" style="display: none;"></div>
+        
+        <div id="vpn-list"></div>
+        
+        <!-- Instruções quando não há cliente -->
+        <div id="instructions" class="alert alert-light">
+            <i class="fas fa-lightbulb me-2"></i>
+            <strong>Como usar:</strong>
+            <ul class="mb-0 mt-2">
+                <li>Digite o nome do cliente no campo acima</li>
+                <li>Clique em "Gerar Relatório"</li>
+                <li>Visualize os dados do lado A e B lado a lado</li>
+                <li>Cada VPN mostra as interfaces e descrições em ambas as pontas</li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<!-- Template para cada VPN -->
+<template id="vpn-template">
+    <div class="card vpn-card mb-3">
+        <div class="card-header">
+            <div class="d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">
+                    <i class="fas fa-sitemap me-2"></i>VPN <span class="vpn-id"></span>
+                </h5>
+                <div class="vpn-badges"></div>
+            </div>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <!-- Lado A -->
+                <div class="col-md-6">
+                    <div class="side-section side-a">
+                        <h6 class="text-primary">
+                            <i class="fas fa-arrow-right me-2"></i>Lado A
+                        </h6>
+                        <div class="side-content"></div>
+                    </div>
+                </div>
+                
+                <!-- Lado B -->
+                <div class="col-md-6">
+                    <div class="side-section side-b">
+                        <h6 class="text-success">
+                            <i class="fas fa-arrow-left me-2"></i>Lado B
+                        </h6>
+                        <div class="side-content"></div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Informações da VPN -->
+            <div class="row mt-3">
+                <div class="col-12">
+                    <div class="vpn-info">
+                        <h6 class="text-muted">Informações da VPN</h6>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <small class="text-muted">Descrição:</small><br>
+                                <span class="vpn-description"></span>
+                            </div>
+                            <div class="col-md-3">
+                                <small class="text-muted">PW Type:</small><br>
+                                <span class="vpn-pw-type"></span>
+                            </div>
+                            <div class="col-md-3">
+                                <small class="text-muted">PW ID:</small><br>
+                                <span class="vpn-pw-id"></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Clientes e Serviços -->
+            <div class="row mt-3">
+                <div class="col-12">
+                    <div class="customers-services">
+                        <h6 class="text-muted">Clientes e Serviços</h6>
+                        <div class="customers-list"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</template>
+
+<!-- Template para lado A/B -->
+<template id="side-template">
+    <div class="equipment-info">
+        <div class="mb-2">
+            <strong>Equipamento:</strong><br>
+            <span class="equipment-hostname"></span>
+            <br>
+            <small class="text-muted">
+                <i class="fas fa-network-wired me-1"></i>
+                <span class="equipment-loopback"></span>
+            </small>
+        </div>
+        
+        <div class="mb-2">
+            <strong>Localização:</strong><br>
+            <span class="equipment-location"></span>
+        </div>
+        
+        <div class="mb-2">
+            <strong>Vizinho:</strong><br>
+            <span class="equipment-hostname"></span>
+            <br>
+            <small class="text-muted">
+                <i class="fas fa-network-wired me-1"></i>
+                <span class="neighbor-loopback"></span>
+            </small>
+        </div>
+        
+        <div class="mb-2">
+            <strong>Interface de Acesso:</strong><br>
+            <span class="access-interface"></span>
+            <div class="interface-details"></div>
+        </div>
+        
+        <div class="mb-2">
+            <strong>VPWS Group:</strong><br>
+            <span class="vpws-group"></span>
+        </div>
+        
+        <div class="encapsulation-details mb-2" style="display: none;">
+            <strong>Detalhes de Encapsulamento:</strong><br>
+            <div class="encapsulation-content"></div>
+        </div>
+    </div>
+</template>
+
+<style>
+.vpn-card {
+    border-left: 4px solid #007bff;
+}
+
+.side-section {
+    padding: 15px;
+    border-radius: 8px;
+    background-color: #f8f9fa;
+    height: 100%;
+}
+
+.side-a {
+    border-left: 3px solid #007bff;
+}
+
+.side-b {
+    border-left: 3px solid #28a745;
+}
+
+.equipment-info {
+    font-size: 0.9rem;
+}
+
+.interface-details {
+    margin-top: 5px;
+    padding-left: 15px;
+    border-left: 2px solid #dee2e6;
+}
+
+.encapsulation-details {
+    margin-top: 10px;
+    padding: 8px;
+    background-color: #e3f2fd;
+    border-radius: 4px;
+    border-left: 3px solid #2196f3;
+}
+
+.encapsulation-content small {
+    display: inline-block;
+    margin-right: 10px;
+    padding: 2px 6px;
+    background-color: #fff;
+    border-radius: 3px;
+    border: 1px solid #2196f3;
+}
+
+.vpn-info, .customers-services {
+    padding: 15px;
+    background-color: #f8f9fa;
+    border-radius: 5px;
+}
+
+.customers-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+}
+
+.customer-badge {
+    background-color: #6c757d;
+    color: white;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 0.8rem;
+    margin-left: 5px;
+}
+
+.service-badge {
+    background-color: #17a2b8;
+    color: white;
+    padding: 2px 6px;
+    border-radius: 10px;
+    font-size: 0.7rem;
+    margin-left: 5px;
+}
+</style>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('DOM carregado, inicializando relatório de cliente...');
+    
+    // Busca todos os elementos necessários
+    const form = document.getElementById('customer-report-form');
+    const customerInput = document.getElementById('customer');
+    const loadingElement = document.getElementById('loading');
+    const errorElement = document.getElementById('error-message');
+    const vpnListElement = document.getElementById('vpn-list');
+    const totalVpnsElement = document.getElementById('total-vpns');
+    const reportTitleElement = document.getElementById('report-title');
+    const instructionsElement = document.getElementById('instructions');
+    const exportExcelBtn = document.getElementById('export-excel-btn');
+    
+    console.log('Elementos encontrados:', {
+        form: !!form,
+        customerInput: !!customerInput,
+        loading: !!loadingElement,
+        error: !!errorElement,
+        vpnList: !!vpnListElement,
+        totalVpns: !!totalVpnsElement,
+        reportTitle: !!reportTitleElement,
+        instructions: !!instructionsElement
+    });
+    
+    // Verifica se os elementos essenciais existem
+    if (!form || !customerInput || !loadingElement || !errorElement || !vpnListElement) {
+        console.error('Elementos essenciais não encontrados');
+        return;
+    }
+    
+    console.log('Todos os elementos essenciais encontrados');
+    
+    form.addEventListener('submit', function(e) {
+        e.preventDefault();
+        generateReport();
+    });
+    
+    // Event listener para botão de exportação Excel
+    if (exportExcelBtn) {
+        exportExcelBtn.addEventListener('click', function() {
+            const customer = customerInput.value.trim();
+            if (customer) {
+                const exportUrl = `/api/customer-report/excel/?customer=${encodeURIComponent(customer)}`;
+                window.location.href = exportUrl;
+            }
+        });
+    }
+    
+    // Se já tem nome do cliente, gera relatório automaticamente
+    if (customerInput.value.trim()) {
+        console.log('Nome do cliente já preenchido, aguardando carregamento completo...');
+        setTimeout(() => {
+            console.log('Tentando gerar relatório automático...');
+            generateReport();
+        }, 500);
+    }
+    
+    function generateReport() {
+        console.log('Iniciando geração de relatório...');
+        
+        const customer = customerInput.value.trim();
+        if (!customer) {
+            console.log('Nome do cliente vazio');
+            return;
+        }
+        
+        console.log('Cliente:', customer);
+        
+        // Esconde instruções e mostra loading
+        if (instructionsElement) instructionsElement.style.display = 'none';
+        if (exportExcelBtn) exportExcelBtn.style.display = 'none';
+        loadingElement.style.display = 'block';
+        errorElement.style.display = 'none';
+        vpnListElement.innerHTML = '';
+        
+        // Atualiza título
+        if (reportTitleElement) {
+            reportTitleElement.textContent = `Relatório: ${customer}`;
+        }
+        
+        // Faz requisição para API
+        const apiUrl = `/api/customer-report/?customer=${encodeURIComponent(customer)}`;
+        console.log('Fazendo requisição para:', apiUrl);
+        
+        fetch(apiUrl)
+            .then(response => {
+                console.log('Resposta recebida:', response.status);
+                return response.json();
+            })
+            .then(data => {
+                console.log('Dados recebidos:', data);
+                
+                loadingElement.style.display = 'none';
+                
+                if (data.error) {
+                    errorElement.textContent = data.error;
+                    errorElement.style.display = 'block';
+                    if (instructionsElement) instructionsElement.style.display = 'block';
+                    return;
+                }
+                
+                // Atualiza contador
+                if (totalVpnsElement) {
+                    totalVpnsElement.textContent = `${data.total_vpns} VPN${data.total_vpns !== 1 ? 's' : ''}`;
+                }
+                
+                // Mostra botão de exportação se há resultados
+                if (exportExcelBtn && data.total_vpns > 0) {
+                    exportExcelBtn.style.display = 'inline-block';
+                }
+                
+                // Renderiza VPNs
+                renderVPNs(data.results);
+            })
+            .catch(error => {
+                console.error('Erro na requisição:', error);
+                loadingElement.style.display = 'none';
+                errorElement.textContent = 'Erro ao gerar relatório: ' + error.message;
+                errorElement.style.display = 'block';
+                if (instructionsElement) instructionsElement.style.display = 'block';
+            });
+    }
+    
+    function renderVPNs(vpns) {
+        console.log('Renderizando VPNs:', vpns.length);
+        
+        const template = document.getElementById('vpn-template');
+        const sideTemplate = document.getElementById('side-template');
+        
+        if (!template || !sideTemplate) {
+            console.error('Templates não encontrados:', {
+                vpnTemplate: !!template,
+                sideTemplate: !!sideTemplate
+            });
+            return;
+        }
+        
+        console.log('Templates encontrados, renderizando...');
+        
+        vpns.forEach((vpn, index) => {
+            console.log(`Renderizando VPN ${index + 1}:`, vpn.vpn_id);
+            
+            const vpnElement = template.content.cloneNode(true);
+            
+            // Preenche dados básicos
+            const vpnIdElement = vpnElement.querySelector('.vpn-id');
+            const vpnDescElement = vpnElement.querySelector('.vpn-description');
+            const vpnPwTypeElement = vpnElement.querySelector('.vpn-pw-type');
+            const vpnPwIdElement = vpnElement.querySelector('.vpn-pw-id');
+            
+            if (vpnIdElement) vpnIdElement.textContent = vpn.vpn_id;
+            if (vpnDescElement) vpnDescElement.textContent = vpn.description || 'N/A';
+            if (vpnPwTypeElement) vpnPwTypeElement.textContent = vpn.pw_type || 'N/A';
+            if (vpnPwIdElement) vpnPwIdElement.textContent = vpn.pw_id || 'N/A';
+            
+            // Badges
+            const badgesContainer = vpnElement.querySelector('.vpn-badges');
+            if (badgesContainer && vpn.encapsulation_type) {
+                const badge = document.createElement('span');
+                badge.className = 'badge bg-secondary me-2';
+                badge.textContent = vpn.encapsulation_type.toUpperCase();
+                badgesContainer.appendChild(badge);
+            }
+            
+            // Renderiza lado A
+            const sideAContent = vpnElement.querySelector('.side-a .side-content');
+            if (sideAContent && vpn.side_a) {
+                console.log(`Renderizando lado A para VPN ${vpn.vpn_id}`);
+                renderSide(sideAContent, vpn.side_a, sideTemplate);
+            }
+            
+            // Renderiza lado B
+            const sideBContent = vpnElement.querySelector('.side-b .side-content');
+            if (sideBContent && vpn.side_b) {
+                console.log(`Renderizando lado B para VPN ${vpn.vpn_id}`);
+                renderSide(sideBContent, vpn.side_b, sideTemplate);
+            }
+            
+            // Renderiza clientes e serviços
+            const customersListElement = vpnElement.querySelector('.customers-list');
+            if (customersListElement) {
+                renderCustomersAndServices(customersListElement, vpn);
+            }
+            
+            vpnListElement.appendChild(vpnElement);
+        });
+        
+        console.log('Renderização concluída');
+    }
+    
+    function renderSide(container, sideData, template) {
+        if (!container || !template) {
+            console.error('Container ou template não encontrado para renderização de lado');
+            return;
+        }
+        
+        const sideElement = template.content.cloneNode(true);
+        
+        // Busca elementos de forma segura
+        const elements = {
+            equipmentHostname: sideElement.querySelector('.equipment-hostname'),
+            equipmentLoopback: sideElement.querySelector('.equipment-loopback'),
+            equipmentLocation: sideElement.querySelector('.equipment-location'),
+            neighborHostname: sideElement.querySelector('.neighbor-hostname'),
+            neighborLoopback: sideElement.querySelector('.neighbor-loopback'),
+            accessInterface: sideElement.querySelector('.access-interface'),
+            vpwsGroup: sideElement.querySelector('.vpws-group'),
+            interfaceDetails: sideElement.querySelector('.interface-details'),
+            encapsulationDetails: sideElement.querySelector('.encapsulation-details'),
+            encapsulationContent: sideElement.querySelector('.encapsulation-content')
+        };
+        
+        // Preenche dados de forma segura
+        if (elements.equipmentHostname) elements.equipmentHostname.textContent = sideData.equipment.hostname;
+        if (elements.equipmentLoopback) elements.equipmentLoopback.textContent = sideData.equipment.loopback_ip;
+        if (elements.equipmentLocation) elements.equipmentLocation.textContent = sideData.equipment.location || 'N/A';
+        if (elements.neighborHostname) elements.neighborHostname.textContent = sideData.neighbor.hostname;
+        if (elements.neighborLoopback) elements.neighborLoopback.textContent = sideData.neighbor.loopback_ip;
+        if (elements.accessInterface) elements.accessInterface.textContent = sideData.access_interface || 'N/A';
+        if (elements.vpwsGroup) elements.vpwsGroup.textContent = sideData.vpws_group || 'N/A';
+        
+        // Detalhes da interface
+        if (elements.interfaceDetails && sideData.access_interface_details) {
+            const details = sideData.access_interface_details;
+            
+            let detailsHtml = '';
+            if (details.type) detailsHtml += `<small class="text-muted">Tipo: ${details.type}</small><br>`;
+            if (details.speed) detailsHtml += `<small class="text-muted">Velocidade: ${details.speed}</small><br>`;
+            if (details.lag_members && details.lag_members.length > 0) {
+                detailsHtml += `<small class="text-muted">Membros: ${details.lag_members.join(', ')}</small>`;
+            }
+            
+            elements.interfaceDetails.innerHTML = detailsHtml;
+        }
+
+        // Detalhes de encapsulamento
+        if (elements.encapsulationDetails && sideData.encapsulation_details) {
+            const details = sideData.encapsulation_details;
+            let detailsHtml = '';
+            
+            if (details.type) {
+                detailsHtml += `<small class="text-muted">Tipo: ${details.type.toUpperCase()}</small><br>`;
+            }
+            
+            if (details.raw) {
+                // Para QINQ, troca "qinq:" por "Encapsulation Dot1q:"
+                let displayText = details.raw;
+                if (details.type === 'qinq' && displayText.startsWith('qinq:')) {
+                    displayText = displayText.replace('qinq:', 'Encapsulation Dot1q:');
+                }
+                detailsHtml += `<small class="text-muted">${displayText}</small><br>`;
+            }
+            
+            if (detailsHtml) {
+                elements.encapsulationContent.innerHTML = detailsHtml;
+                elements.encapsulationDetails.style.display = 'block'; // Mostra a seção
+            } else {
+                elements.encapsulationDetails.style.display = 'none'; // Esconde a seção
+            }
+        } else {
+            elements.encapsulationDetails.style.display = 'none'; // Esconde a seção
+        }
+        
+        container.appendChild(sideElement);
+    }
+    
+    function renderCustomersAndServices(container, vpn) {
+        if (!container || !vpn.services) return;
+        
+        vpn.services.forEach(service => {
+            const customerBadge = document.createElement('span');
+            customerBadge.className = 'customer-badge';
+            customerBadge.textContent = service.name;
+            container.appendChild(customerBadge);
+            
+            if (service.type) {
+                const serviceBadge = document.createElement('span');
+                serviceBadge.className = 'service-badge';
+                serviceBadge.textContent = service.type;
+                container.appendChild(serviceBadge);
+            }
+        });
+    }
+    
+    console.log('Relatório de cliente inicializado com sucesso');
+});
+</script>
+{% endblock %}
