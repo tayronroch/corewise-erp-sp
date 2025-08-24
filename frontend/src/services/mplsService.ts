@@ -118,61 +118,211 @@ class MplsService {
     try {
       console.log('🚀 MPLS SERVICE - Intelligent search chamada:', { query, searchType });
 
+      // Usar o endpoint de relatório de cliente que retorna todos os resultados
+      // O endpoint /search/ tem bug de paginação (sempre retorna os mesmos 10 resultados)
+      console.log('🔄 MPLS SERVICE - Usando endpoint de relatório para busca completa...');
+      
+      const response = await this.request<any>('/reports/customers/', {
+        params: { customer: query }
+      });
+      
+      console.log('🔥 MPLS SERVICE - Relatório API response:', response);
+      
+      if (!response || !response.results) {
+        console.log('❌ MPLS SERVICE - Sem resultados no relatório, tentando busca alternativa...');
+        // Fallback para busca alternativa se o relatório não funcionar
+        return this.fallbackSearch(query);
+      }
+      
+      // Converter os dados do relatório para o formato de busca
+      const convertedResults: SearchResult[] = [];
+      
+      response.results.forEach((vpn: any, index: number) => {
+        // Processar lado A
+        if (vpn.side_a && vpn.side_a.equipment) {
+          convertedResults.push({
+            id: index * 2,
+            equipment_name: vpn.side_a.equipment.hostname || '',
+            equipment_location: vpn.side_a.equipment.location || '',
+            backup_date: vpn.side_a.equipment.last_backup || '',
+            raw_config: '',
+            vpn_id: vpn.vpn_id,
+            loopback_ip: vpn.side_a.equipment.loopback_ip || '',
+            neighbor_ip: vpn.side_a.neighbor?.loopback_ip || vpn.side_b?.equipment?.loopback_ip || '',
+            neighbor_hostname: vpn.side_a.neighbor?.hostname || vpn.side_b?.equipment?.hostname || '',
+            access_interface: vpn.side_a.access_interface || '',
+            encapsulation: vpn.encapsulation || '',
+            description: vpn.description || '',
+            group_name: '',
+            customers: [query], // Usar o nome do cliente da busca
+            highlights: [],
+            vpws_groups: vpn.vpn_id ? [{
+              id: vpn.vpn_id,
+              name: `VPN ${vpn.vpn_id}`,
+              vpns: [{
+                id: vpn.vpn_id,
+                vpn_id: vpn.vpn_id,
+                name: vpn.description || `VPN ${vpn.vpn_id}`
+              }]
+            }] : [],
+            customer_services: [{
+              id: index,
+              customer_name: query,
+              service_type: 'VPN'
+            }]
+          });
+        }
+        
+        // Processar lado B
+        if (vpn.side_b && vpn.side_b.equipment) {
+          convertedResults.push({
+            id: index * 2 + 1,
+            equipment_name: vpn.side_b.equipment.hostname || '',
+            equipment_location: vpn.side_b.equipment.location || '',
+            backup_date: vpn.side_b.equipment.last_backup || '',
+            raw_config: '',
+            vpn_id: vpn.vpn_id,
+            loopback_ip: vpn.side_b.equipment.loopback_ip || '',
+            neighbor_ip: vpn.side_b.neighbor?.loopback_ip || vpn.side_a?.equipment?.loopback_ip || '',
+            neighbor_hostname: vpn.side_b.neighbor?.hostname || vpn.side_a?.equipment?.hostname || '',
+            access_interface: vpn.side_b.access_interface || '',
+            encapsulation: vpn.encapsulation || '',
+            description: vpn.description || '',
+            group_name: '',
+            customers: [query],
+            highlights: [],
+            vpws_groups: vpn.vpn_id ? [{
+              id: vpn.vpn_id,
+              name: `VPN ${vpn.vpn_id}`,
+              vpns: [{
+                id: vpn.vpn_id,
+                vpn_id: vpn.vpn_id,
+                name: vpn.description || `VPN ${vpn.vpn_id}`
+              }]
+            }] : [],
+            customer_services: [{
+              id: index,
+              customer_name: query,
+              service_type: 'VPN'
+            }]
+          });
+        }
+      });
+      
+      console.log('🎯 MPLS SERVICE - Total convertido do relatório:', convertedResults.length);
+      return convertedResults;
+      
+    } catch (error) {
+      console.error('❌ Erro na busca MPLS:', error);
+      // Fallback para busca alternativa
+      return this.fallbackSearch(query);
+    }
+  }
+
+  // Fallback para busca alternativa se o relatório falhar
+  private async fallbackSearch(query: string): Promise<SearchResult[]> {
+    try {
+      console.log('🔄 MPLS SERVICE - Usando fallback de busca...');
+      
       // Função auxiliar para detectar forma de paginação e consolidar resultados
       const collectAllResults = async (): Promise<{ items: any[]; total: number; meta: any }> => {
+        const allItems: any[] = [];
+        
+        // 1) Primeiro, tentar paginação por page com page_size maior
+        console.log('🔄 MPLS SERVICE - Tentando paginação por page...');
+        let page = 1;
+        let hasMoreData = true;
+        
+        while (hasMoreData && page <= 50) {
+          try {
+            const resp = await this.request<any>('/search/', { 
+              params: { 
+                q: query, 
+                page, 
+                page_size: 100  // Aumentar para 100 por página
+              } 
+            });
+            
+            const pageItems = resp.results || resp.data?.results || resp.items || [];
+            console.log(`📄 MPLS SERVICE - page=${page} recv=${pageItems.length} total_acumulado=${allItems.length}`);
+            
+            if (pageItems.length === 0) {
+              hasMoreData = false;
+              break;
+            }
+            
+            // Adicionar todos os itens desta página
+            allItems.push(...pageItems);
+            
+            // Se recebeu menos que o page_size, provavelmente é a última página
+            if (pageItems.length < 100) {
+              hasMoreData = false;
+            }
+            
+            page++;
+          } catch (error) {
+            console.error(`❌ Erro na página ${page}:`, error);
+            break;
+          }
+        }
+        
+        // 2) Se ainda não temos dados suficientes, tentar offset/limit
+        if (allItems.length < 30) {
+          console.log('🔄 MPLS SERVICE - Tentando paginação por offset/limit...');
+          let offset = 0;
+          const limit = 100;
+          
+          while (offset < 1000) { // Limite de segurança
+            try {
+              const resp = await this.request<any>('/search/', { 
+                params: { 
+                  q: query, 
+                  offset, 
+                  limit 
+                } 
+              });
+              
+              const pageItems = resp.results || resp.data?.results || resp.items || [];
+              console.log(`📑 MPLS SERVICE - offset=${offset} recv=${pageItems.length} total_acumulado=${allItems.length}`);
+              
+              if (pageItems.length === 0) {
+                break;
+              }
+              
+              // Adicionar todos os itens desta página
+              allItems.push(...pageItems);
+              offset += pageItems.length;
+              
+              // Se recebeu menos que o limit, provavelmente é a última página
+              if (pageItems.length < limit) {
+                break;
+              }
+            } catch (error) {
+              console.error(`❌ Erro no offset ${offset}:`, error);
+              break;
+            }
+          }
+        }
+        
+        // 3) Remover duplicatas APÓS coletar todos os dados
+        console.log(`🔍 MPLS SERVICE - Total coletado antes de deduplicação: ${allItems.length}`);
+        
         const uniqueItems: any[] = [];
         const seen = new Set<string>();
-        const makeKey = (it: any) => `${it.vpn_id || ''}-${it.equipment_name || ''}-${it.neighbor_ip || ''}-${it.access_interface || ''}`;
-        const addUnique = (arr: any[]) => {
-          let added = 0;
-          for (const it of arr) {
-            const key = makeKey(it);
-            if (!seen.has(key)) {
-              seen.add(key);
-              uniqueItems.push(it);
-              added += 1;
-            }
-          }
-          return added;
-        };
-
-        // 1) Tentar paginação por page
-        let page = 1;
-        let emptyOrDupStreak = 0;
-        for (; page <= 100; page += 1) {
-          const resp = await this.request<any>('/search/', { params: { q: query, page, page_size: 50 } });
-          const pageItems = resp.results || resp.data?.results || resp.items || [];
-          const added = addUnique(pageItems);
-          console.log(`📄 MPLS SERVICE - page=${page} recv=${pageItems.length} added=${added} total=${uniqueItems.length}`);
-          if (pageItems.length === 0 || added === 0) {
-            emptyOrDupStreak += 1;
-          } else {
-            emptyOrDupStreak = 0;
-          }
-          if (emptyOrDupStreak >= 3) break; // 3 páginas sem progresso → parar
-        }
-
-        // 2) Se muito pouco ou backend ignora page, tentar offset/limit
-        if (uniqueItems.length < 24) {
-          let offset = 0;
-          const limit = 50;
-          emptyOrDupStreak = 0;
-          for (let guard = 0; guard < 100; guard += 1) {
-            const resp = await this.request<any>('/search/', { params: { q: query, offset, limit } });
-            const pageItems = resp.results || resp.data?.results || resp.items || [];
-            const added = addUnique(pageItems);
-            console.log(`📑 MPLS SERVICE - offset=${offset} recv=${pageItems.length} added=${added} total=${uniqueItems.length}`);
-            offset += pageItems.length;
-            if (pageItems.length === 0 || added === 0) {
-              emptyOrDupStreak += 1;
-            } else {
-              emptyOrDupStreak = 0;
-            }
-            if (emptyOrDupStreak >= 2) break; // 2 páginas sem progresso → parar
+        
+        for (const item of allItems) {
+          // Criar chave mais específica para VPNs
+          const key = `${item.vpn_id || 'N/A'}-${item.equipment_name || 'N/A'}-${item.neighbor_ip || 'N/A'}-${item.access_interface || 'N/A'}-${item.description || 'N/A'}`;
+          
+          if (!seen.has(key)) {
+            seen.add(key);
+            uniqueItems.push(item);
           }
         }
-
-        console.log(`🎯 MPLS SERVICE - Total único coletado: ${uniqueItems.length}`);
+        
+        console.log(`🎯 MPLS SERVICE - Total único após deduplicação: ${uniqueItems.length}`);
+        console.log(`📊 MPLS SERVICE - Duplicatas removidas: ${allItems.length - uniqueItems.length}`);
+        
         return { items: uniqueItems, total: uniqueItems.length, meta: { query } };
       };
 
@@ -229,7 +379,7 @@ class MplsService {
       
       return mappedResults;
     } catch (error) {
-      console.error('Erro na busca MPLS:', error);
+      console.error('❌ Erro no fallback de busca:', error);
       return [];
     }
   }

@@ -12,6 +12,12 @@ const MplsSearchSystem: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  
+  // Estados de paginação
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalResults, setTotalResults] = useState(0);
 
   useEffect(()=>{ if(filters.query.length>=2){ loadSuggestions(); } else { setSuggestions([]); setShowSuggestions(false);} }, [filters.query]);
 
@@ -20,6 +26,7 @@ const MplsSearchSystem: React.FC = () => {
   const handleSearch = async () => {
     if (!filters.query.trim()) return;
     setIsLoading(true);
+    setCurrentPage(1); // Reset para primeira página
     try {
       console.log('🔍 Buscando por:', filters.query);
       const data = await mplsService.intelligentSearch(filters.query);
@@ -34,6 +41,8 @@ const MplsSearchSystem: React.FC = () => {
       console.log('🔄 Dados únicos após filtro:', uniqueData);
       
       setResults(uniqueData);
+      setTotalResults(uniqueData.length);
+      setTotalPages(Math.ceil(uniqueData.length / pageSize));
       
       // Agrupar por equipamento
       const groups: Record<string, SearchResult[]> = {};
@@ -55,7 +64,37 @@ const MplsSearchSystem: React.FC = () => {
     }
   };
 
+  // Função para obter resultados paginados
+  const getPaginatedResults = () => {
+    const startIndex = (currentPage - 1) * pageSize;
+    const endIndex = startIndex + pageSize;
+    
+    // Converter grupos para array e aplicar paginação
+    const equipmentArray = Object.entries(groupedByEquipment);
+    const paginatedEquipment = equipmentArray.slice(startIndex, endIndex);
+    
+    return Object.fromEntries(paginatedEquipment);
+  };
+
+  // Função para mudar de página
+  const handlePageChange = (page: number) => {
+    setCurrentPage(page);
+    // Scroll para o topo dos resultados
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  // Função para mudar tamanho da página
+  const handlePageSizeChange = (newPageSize: number) => {
+    setPageSize(newPageSize);
+    setCurrentPage(1);
+    setTotalPages(Math.ceil(totalResults / newPageSize));
+  };
+
   const formatDate = (v?:string) => v? new Date(v).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '';
+
+  // Obter resultados da página atual
+  const currentPageResults = getPaginatedResults();
+  const hasResults = Object.keys(currentPageResults).length > 0;
 
   return (
     <div className="max-w-7xl mx-auto p-1 md:p-0">
@@ -106,7 +145,7 @@ const MplsSearchSystem: React.FC = () => {
               <button type="submit" className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50" disabled={isLoading}><i className="fas fa-search"/>{isLoading?'Buscando...':'Buscar'}</button>
               <div className="flex items-center gap-2">
                 <a href="/customer-report" className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-cyan-600 text-white hover:bg-cyan-700"><i className="fas fa-user"/>Relatório de Cliente</a>
-                <button type="button" className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-slate-200 text-slate-800 hover:bg-slate-300" onClick={()=>{ setFilters({query:'',equipment:'',location:'',service_type:''}); setResults([]); setGroupedByEquipment({});}}> <i className="fas fa-times"/>Limpar Filtros</button>
+                <button type="button" className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-slate-200 text-slate-800 hover:bg-slate-300" onClick={()=>{ setFilters({query:'',equipment:'',location:'',service_type:''}); setResults([]); setGroupedByEquipment({}); setCurrentPage(1); setTotalPages(1); setTotalResults(0);}}> <i className="fas fa-times"/>Limpar Filtros</button>
               </div>
             </div>
           </form>
@@ -117,11 +156,73 @@ const MplsSearchSystem: React.FC = () => {
         <div className="space-y-4 mt-4">
           <div className="flex items-center justify-between">
             <h4 className="text-lg font-semibold">Resultados da Busca</h4>
-            <span className="text-sm text-slate-600">{Object.keys(groupedByEquipment).length} equipamentos • {results.length} serviços</span>
+            <span className="text-sm text-slate-600">
+              {Object.keys(groupedByEquipment).length} equipamentos • {results.length} serviços
+              {totalPages > 1 && (
+                <span className="ml-2 text-blue-600">
+                  • Página {currentPage} de {totalPages}
+                </span>
+              )}
+            </span>
           </div>
 
+          {/* Controles de paginação */}
+          {totalPages > 1 && (
+            <div className="bg-white border border-slate-200 rounded-lg p-4 flex flex-col sm:flex-row items-center justify-between gap-4">
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-slate-600">Mostrar:</span>
+                <select 
+                  value={pageSize} 
+                  onChange={(e) => handlePageSizeChange(Number(e.target.value))}
+                  className="border border-slate-300 rounded-md px-2 py-1 text-sm"
+                >
+                  <option value={5}>5 por página</option>
+                  <option value={10}>10 por página</option>
+                  <option value={20}>20 por página</option>
+                  <option value={50}>50 por página</option>
+                </select>
+              </div>
+              
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => handlePageChange(1)}
+                  disabled={currentPage === 1}
+                  className="px-3 py-1 rounded-md text-sm border border-slate-300 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-50"
+                >
+                  <i className="fas fa-angle-double-left"></i>
+                </button>
+                <button
+                  onClick={() => handlePageChange(currentPage - 1)}
+                  disabled={currentPage === 1}
+                  className="px-3 py-1 rounded-md text-sm border border-slate-300 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-50"
+                >
+                  <i className="fas fa-angle-left"></i>
+                </button>
+                
+                <span className="text-sm text-slate-600">
+                  Página {currentPage} de {totalPages}
+                </span>
+                
+                <button
+                  onClick={() => handlePageChange(currentPage + 1)}
+                  disabled={currentPage === totalPages}
+                  className="px-3 py-1 rounded-md text-sm border border-slate-300 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-50"
+                >
+                  <i className="fas fa-angle-right"></i>
+                </button>
+                <button
+                  onClick={() => handlePageChange(totalPages)}
+                  disabled={currentPage === totalPages}
+                  className="px-3 py-1 rounded-md text-sm border border-slate-300 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-50"
+                >
+                  <i className="fas fa-angle-double-right"></i>
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="space-y-4">
-            {Object.entries(groupedByEquipment).map(([equipment, services]) => {
+            {Object.entries(currentPageResults).map(([equipment, services]) => {
               const first = services[0];
               return (
                 <div key={equipment} className="border border-slate-200 rounded-xl shadow-sm bg-white">
@@ -200,6 +301,71 @@ const MplsSearchSystem: React.FC = () => {
               );
             })}
           </div>
+
+          {/* Paginação inferior */}
+          {totalPages > 1 && (
+            <div className="bg-white border border-slate-200 rounded-lg p-4 flex items-center justify-center gap-2">
+              <button
+                onClick={() => handlePageChange(1)}
+                disabled={currentPage === 1}
+                className="px-3 py-1 rounded-md text-sm border border-slate-300 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-50"
+              >
+                <i className="fas fa-angle-double-left"></i>
+              </button>
+              <button
+                onClick={() => handlePageChange(currentPage - 1)}
+                disabled={currentPage === 1}
+                className="px-3 py-1 rounded-md text-sm border border-slate-300 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-50"
+              >
+                <i className="fas fa-angle-left"></i>
+              </button>
+              
+              {/* Números das páginas */}
+              <div className="flex items-center gap-1">
+                {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                  let pageNum;
+                  if (totalPages <= 5) {
+                    pageNum = i + 1;
+                  } else if (currentPage <= 3) {
+                    pageNum = i + 1;
+                  } else if (currentPage >= totalPages - 2) {
+                    pageNum = totalPages - 4 + i;
+                  } else {
+                    pageNum = currentPage - 2 + i;
+                  }
+                  
+                  return (
+                    <button
+                      key={pageNum}
+                      onClick={() => handlePageChange(pageNum)}
+                      className={`px-3 py-1 rounded-md text-sm border ${
+                        currentPage === pageNum
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'border-slate-300 text-slate-700 hover:bg-slate-50'
+                      }`}
+                    >
+                      {pageNum}
+                    </button>
+                  );
+                })}
+              </div>
+              
+              <button
+                onClick={() => handlePageChange(currentPage + 1)}
+                disabled={currentPage === totalPages}
+                className="px-3 py-1 rounded-md text-sm border border-slate-300 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-50"
+              >
+                <i className="fas fa-angle-right"></i>
+              </button>
+              <button
+                onClick={() => handlePageChange(totalPages)}
+                disabled={currentPage === totalPages}
+                className="px-3 py-1 rounded-md text-sm border border-slate-300 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-50"
+              >
+                <i className="fas fa-angle-double-right"></i>
+              </button>
+            </div>
+          )}
         </div>
       )}
 
