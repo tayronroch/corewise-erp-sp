@@ -3,7 +3,7 @@
  */
 import React, { useState } from 'react';
 import MplsSearchSystem from './mpls-search-system';
-import CustomerReportComponent from './customer-report';
+// import CustomerReportComponent from './customer-report';
 
 interface MplsAnalyzerDashboardProps {
   onBack?: () => void;
@@ -57,9 +57,11 @@ const MplsAnalyzerDashboard: React.FC<MplsAnalyzerDashboardProps> = ({ onBack })
             <div>
               <div className="mb-4">
                 <h2 className="text-xl font-semibold">Relatórios de Cliente</h2>
-                <p className="text-slate-600">Visualize equipamentos, interfaces e serviços agrupados por cliente</p>
+                <p className="text-slate-600">Módulo de relatório temporariamente indisponível.</p>
               </div>
-              <CustomerReportComponent />
+              <div className="rounded-md border border-slate-200 p-4 text-slate-700 bg-slate-50">
+                Esta seção foi desativada. Consulte a busca inteligente ou reative o módulo de relatório.
+              </div>
             </div>
           )}
         </section>

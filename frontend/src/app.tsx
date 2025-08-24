@@ -8,9 +8,7 @@ import MapManager from './components/topology/mapmanager';
 import NetworkTopology from './components/topology/networktopology';
 import TopologyManager from './components/topology/topology-manager';
 import UserManagement from './components/users/user-management';
-import { 
-  MplsAnalyzerDashboard
-} from './components/mpls';
+import MplsAnalyzerDashboard from './components/mpls/mpls-analyzer-dashboard';
 
 const darkTheme = createTheme({
   palette: {

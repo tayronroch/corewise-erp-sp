@@ -21,13 +21,38 @@ const MplsSearchSystem: React.FC = () => {
     if (!filters.query.trim()) return;
     setIsLoading(true);
     try {
+      console.log('🔍 Buscando por:', filters.query);
       const data = await mplsService.intelligentSearch(filters.query);
-      setResults(data);
+      console.log('📊 Dados recebidos:', data);
+      
+      // Remover duplicatas baseado em vpn_id + equipment_name
+      const uniqueData = data.filter((item, index, self) => 
+        index === self.findIndex(t => 
+          t.vpn_id === item.vpn_id && t.equipment_name === item.equipment_name
+        )
+      );
+      console.log('🔄 Dados únicos após filtro:', uniqueData);
+      
+      setResults(uniqueData);
+      
+      // Agrupar por equipamento
       const groups: Record<string, SearchResult[]> = {};
-      for (const r of data) { const k=r.equipment_name||'Sem equipamento'; if(!groups[k]) groups[k]=[]; groups[k].push(r);}
+      for (const r of uniqueData) { 
+        const k = r.equipment_name || 'Sem equipamento'; 
+        if (!groups[k]) groups[k] = []; 
+        groups[k].push(r);
+      }
+      console.log('🏗️ Grupos criados:', groups);
       setGroupedByEquipment(groups);
-      const init:Record<string,boolean>={}; Object.keys(groups).forEach(k=>init[k]=false); setExpandedEquipments(init);
-    } finally { setIsLoading(false); }
+      
+      const init: Record<string, boolean> = {}; 
+      Object.keys(groups).forEach(k => init[k] = false); 
+      setExpandedEquipments(init);
+    } catch (error) {
+      console.error('❌ Erro na busca:', error);
+    } finally { 
+      setIsLoading(false); 
+    }
   };
 
   const formatDate = (v?:string) => v? new Date(v).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '';
@@ -115,21 +140,52 @@ const MplsSearchSystem: React.FC = () => {
                   </div>
 
                   <div className="p-4">
-                    <div className="hidden md:grid md:grid-cols-6 text-xs font-medium text-slate-600 border-b border-slate-200 pb-2">
-                      <div className="md:col-span-2">VPN / Vizinho</div>
-                      <div className="md:col-span-2">Interface</div>
+                    {/* Cabeçalho de colunas */}
+                    <div className="hidden md:grid md:grid-cols-6 text-xs font-medium text-slate-500 border-b border-slate-200 pb-2">
+                      <div className="md:col-span-2">VPN / Destino</div>
+                      <div className="md:col-span-2">Interface / Velocidade</div>
                       <div>Encapsulamento</div>
                       <div className="text-right">Backup</div>
                     </div>
 
                     {(expandedEquipments[equipment] ? services : services.slice(0, 10)).map((result, idx) => {
-                      const enc = result.encapsulation || ''; const encType = enc.includes('qinq')?'qinq':'vlan'; const encValue = enc.replace(/^qinq:\\s*/i,'').replace(/^vlan:\\s*/i,'');
+                      const enc = result.encapsulation || '';
+                      const encType = enc.includes('qinq') ? 'qinq' : 'vlan';
+                      const encValue = enc.replace(/^qinq:\s*/i, '').replace(/^vlan:\s*/i, '');
+                      const interfaceSpeed = result.access_interface?.includes('hundred-gigabit') ? '100G' : 
+                                           result.access_interface?.includes('twenty-five-g') ? '25G' : 
+                                           result.access_interface?.includes('ten-gigabit') ? '10G' : '';
                       return (
-                        <div key={idx} className={`py-3 grid grid-cols-1 md:grid-cols-6 gap-3 items-start text-sm ${idx%2===0?'bg-slate-50':''} md:bg-transparent md:hover:bg-slate-50 rounded-md px-2 md:px-0`}>
-                          <div className="md:col-span-2 flex items-center gap-2 text-slate-700"><i className="fas fa-sitemap text-slate-400"></i><span className="font-medium">VPN {result.vpn_id || 'N/A'}</span><span className="text-slate-600">→ {result.neighbor_ip}{result.neighbor_hostname && (<span className="text-emerald-600"> ({result.neighbor_hostname})</span>)}</span></div>
-                          <div className="md:col-span-2 flex items-center gap-2 text-slate-700"><i className="fas fa-ethernet text-slate-400"></i><span className="font-mono">{result.access_interface || '-'}</span></div>
-                          <div className="md:col-span-1 flex items-center gap-2 text-slate-700"><i className="fas fa-layer-group text-slate-400"></i><span className="inline-flex items-center gap-2"><span className="px-2 py-0.5 rounded text-xs bg-blue-100 text-blue-800 uppercase ring-1 ring-inset ring-blue-200">{encType}</span><span className="px-2 py-0.5 rounded text-xs bg-slate-200 text-slate-800">{encValue}</span></span></div>
-                          <div className="md:col-span-1 text-right text-slate-500">{result.backup_date && <span>{formatDate(result.backup_date)}</span>}</div>
+                        <div key={idx} className={`py-3 grid grid-cols-1 md:grid-cols-6 gap-3 items-start text-sm ${idx % 2 === 0 ? 'bg-slate-50' : ''} md:bg-transparent md:hover:bg-slate-50 rounded-md px-2 md:px-0`}>
+                          <div className="md:col-span-2 flex items-center gap-2 text-slate-700">
+                            <i className="fas fa-sitemap text-slate-400"></i>
+                            <span className="font-medium">VPN {result.vpn_id || 'N/A'}</span>
+                            <div className="flex flex-col">
+                              <span className="text-slate-600">→ {result.neighbor_ip}</span>
+                              {result.neighbor_hostname && (
+                                <span className="text-emerald-600 text-xs">({result.neighbor_hostname})</span>
+                              )}
+                            </div>
+                          </div>
+                          <div className="md:col-span-2 flex items-center gap-2 text-slate-700">
+                            <i className="fas fa-ethernet text-slate-400"></i>
+                            <div className="flex flex-col">
+                              <span className="font-mono text-xs">{result.access_interface || '-'}</span>
+                              {interfaceSpeed && (
+                                <span className="text-slate-500 text-xs">({interfaceSpeed})</span>
+                              )}
+                            </div>
+                          </div>
+                          <div className="md:col-span-1 flex items-center gap-2 text-slate-700">
+                            <i className="fas fa-layer-group text-slate-400"></i>
+                            <span className="inline-flex items-center gap-2">
+                              <span className="px-2 py-0.5 rounded text-xs bg-blue-100 text-blue-800 uppercase ring-1 ring-inset ring-blue-200">{encType}</span>
+                              <span className="px-2 py-0.5 rounded text-xs bg-slate-200 text-slate-700">{encValue || '-'}</span>
+                            </span>
+                          </div>
+                          <div className="md:col-span-1 text-right text-slate-500">
+                            {result.backup_date && <span className="text-xs">{formatDate(result.backup_date)}</span>}
+                          </div>
                         </div>
                       );
                     })}

@@ -120,71 +120,60 @@ class MplsService {
 
       // Função auxiliar para detectar forma de paginação e consolidar resultados
       const collectAllResults = async (): Promise<{ items: any[]; total: number; meta: any }> => {
-        // Primeira tentativa: enviar vários parâmetros de paginação comuns
-        const baseParams: any = {
-          q: query,
-          page: 1,
-          page_size: 1000,
-          limit: 1000,
-          size: 1000,
-          per_page: 1000,
-          all: true,
+        const uniqueItems: any[] = [];
+        const seen = new Set<string>();
+        const makeKey = (it: any) => `${it.vpn_id || ''}-${it.equipment_name || ''}-${it.neighbor_ip || ''}-${it.access_interface || ''}`;
+        const addUnique = (arr: any[]) => {
+          let added = 0;
+          for (const it of arr) {
+            const key = makeKey(it);
+            if (!seen.has(key)) {
+              seen.add(key);
+              uniqueItems.push(it);
+              added += 1;
+            }
+          }
+          return added;
         };
 
-        const first = await this.request<any>('/search/', { params: baseParams });
-        let items: any[] = Array.isArray(first) ? first : (first.results || first.data?.results || first.items || []);
-        const totalFromResponse: number = first.total ?? first.count ?? first.data?.count ?? first.results_count ?? items.length ?? 0;
-        let nextUrl: string | null = first.next ?? first.data?.next ?? null;
-
-        // Caso haja paginação por "next" (padrão DRF), seguir links
-        let safety = 0;
-        while (nextUrl && safety < 50) {
-          try {
-            const nextResp = await api({ url: nextUrl, method: 'GET' });
-            const nextData = nextResp.data;
-            const nextItems = nextData.results || [];
-            items = items.concat(nextItems);
-            nextUrl = nextData.next || null;
-            safety += 1;
-          } catch (e) {
-            console.warn('⚠️ MPLS SERVICE - Falha ao seguir paginação via next:', e);
-            break;
+        // 1) Tentar paginação por page
+        let page = 1;
+        let emptyOrDupStreak = 0;
+        for (; page <= 100; page += 1) {
+          const resp = await this.request<any>('/search/', { params: { q: query, page, page_size: 50 } });
+          const pageItems = resp.results || resp.data?.results || resp.items || [];
+          const added = addUnique(pageItems);
+          console.log(`📄 MPLS SERVICE - page=${page} recv=${pageItems.length} added=${added} total=${uniqueItems.length}`);
+          if (pageItems.length === 0 || added === 0) {
+            emptyOrDupStreak += 1;
+          } else {
+            emptyOrDupStreak = 0;
           }
+          if (emptyOrDupStreak >= 3) break; // 3 páginas sem progresso → parar
         }
 
-        // Se ainda houver chance de mais páginas, tentar paginação por page até esgotar
-        if (items.length <= totalFromResponse) {
-          let page = 2;
-          while (page <= 50) {
-            const resp = await this.request<any>('/search/', {
-              params: { ...baseParams, page, page_size: 1000 }
-            });
+        // 2) Se muito pouco ou backend ignora page, tentar offset/limit
+        if (uniqueItems.length < 24) {
+          let offset = 0;
+          const limit = 50;
+          emptyOrDupStreak = 0;
+          for (let guard = 0; guard < 100; guard += 1) {
+            const resp = await this.request<any>('/search/', { params: { q: query, offset, limit } });
             const pageItems = resp.results || resp.data?.results || resp.items || [];
-            if (!pageItems.length) break;
-            items = items.concat(pageItems);
-            page += 1;
-          }
-        }
-
-        // Como último fallback tentar offset/limit até esgotar
-        if (items.length <= totalFromResponse) {
-          let offset = items.length;
-          const step = 200;
-          let guard = 0;
-          while (guard < 50) {
-            const resp = await this.request<any>('/search/', {
-              params: { q: query, limit: step, offset }
-            });
-            const pageItems = resp.results || resp.data?.results || resp.items || [];
-            if (!pageItems.length) break;
-            items = items.concat(pageItems);
+            const added = addUnique(pageItems);
+            console.log(`📑 MPLS SERVICE - offset=${offset} recv=${pageItems.length} added=${added} total=${uniqueItems.length}`);
             offset += pageItems.length;
-            guard += 1;
+            if (pageItems.length === 0 || added === 0) {
+              emptyOrDupStreak += 1;
+            } else {
+              emptyOrDupStreak = 0;
+            }
+            if (emptyOrDupStreak >= 2) break; // 2 páginas sem progresso → parar
           }
         }
 
-        const finalTotal = Math.max(totalFromResponse || 0, items.length);
-        return { items, total: finalTotal, meta: first };
+        console.log(`🎯 MPLS SERVICE - Total único coletado: ${uniqueItems.length}`);
+        return { items: uniqueItems, total: uniqueItems.length, meta: { query } };
       };
 
       const { items, total, meta } = await collectAllResults();
@@ -197,38 +186,41 @@ class MplsService {
       });
 
       // Mapear os dados da API para o formato esperado pelo frontend
-      const mappedResults = items.map((item, index) => ({
-        id: index,
-        equipment_name: item.equipment_name || '',
-        equipment_location: item.location || item.equipment_location || '',
-        backup_date: item.last_backup || item.backup_date || '',
-        raw_config: '',
-        // Dados detalhados do equipamento/VPN
-        vpn_id: item.vpn_id,
-        loopback_ip: item.loopback_ip,
-        neighbor_ip: item.neighbor_ip,
-        neighbor_hostname: item.neighbor_hostname,
-        access_interface: item.access_interface,
-        encapsulation: item.encapsulation,
-        description: item.description,
-        group_name: item.group_name,
-        customers: item.customers || [],
-        highlights: item.highlights || [],
-        vpws_groups: item.vpn_id ? [{
-          id: item.vpn_id || index,
-          name: `VPN ${item.vpn_id || 'N/A'}`,
-          vpns: [{
-            id: item.vpn_id || index,
-            vpn_id: item.vpn_id || 0,
-            name: item.description || `VPN ${item.vpn_id || 'N/A'}`
-          }]
-        }] : [],
-        customer_services: item.customers && item.customers.length > 0 ? [{
+      const mappedResults: SearchResult[] = items.map((item, index) => {
+        const it = item as Record<string, any>;
+        return ({
           id: index,
-          customer_name: item.customers[0],
-          service_type: 'VPN'
-        }] : []
-      }));
+          equipment_name: it.equipment_name || '',
+          equipment_location: it.location || it.equipment_location || '',
+          backup_date: it.last_backup || it.backup_date || '',
+          raw_config: '',
+          // Dados detalhados do equipamento/VPN
+          vpn_id: it.vpn_id,
+          loopback_ip: it.loopback_ip,
+          neighbor_ip: it.neighbor_ip,
+          neighbor_hostname: it.neighbor_hostname,
+          access_interface: it.access_interface,
+          encapsulation: it.encapsulation,
+          description: it.description,
+          group_name: it.group_name,
+          customers: (it.customers as string[]) || [],
+          highlights: (it.highlights as any[]) || [],
+          vpws_groups: it.vpn_id ? [{
+            id: it.vpn_id || index,
+            name: `VPN ${it.vpn_id || 'N/A'}`,
+            vpns: [{
+              id: it.vpn_id || index,
+              vpn_id: it.vpn_id || 0,
+              name: it.description || `VPN ${it.vpn_id || 'N/A'}`
+            }]
+          }] : [],
+          customer_services: it.customers && (it.customers as string[]).length > 0 ? [{
+            id: index,
+            customer_name: (it.customers as string[])[0],
+            service_type: 'VPN'
+          }] : []
+        });
+      });
       
       // Adicionar metadados aos resultados para o frontend
       // Garantir que total corresponda ao que foi realmente reunido
