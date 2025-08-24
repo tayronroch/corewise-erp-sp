@@ -56,6 +56,18 @@ export interface SearchResult {
     access_interface: string;
     interface_details: any;
   };
+  // Campos LAG específicos
+  interface_lag_members?: string[];
+  interface_note?: string;
+  interface_description?: string;
+  interface_found_in_db?: boolean;
+  neighbor_interface_description?: string;
+  neighbor_interface_found_in_db?: boolean;
+  opposite_interface?: string;
+  pw_type?: string;
+  vlan_id?: string;
+  customer_name?: string;
+  
   // Informações de destino para casos onde o equipamento não está na base
   destination_info?: {
     hostname: string;
@@ -67,6 +79,20 @@ export interface SearchResult {
       id: number;
       // Outros campos do vpws_group se necessário
     } | null;
+    localInterface?: {
+      name: string;
+      details: any;
+      capacity: string;
+      media: string;
+      description: string;
+    };
+    remoteInterface?: {
+      name: string;
+      details: any;
+      capacity: string;
+      media: string;
+      description: string;
+    };
     sideBInterface?: {
       name: string;
       details: any;
@@ -361,6 +387,83 @@ class MplsService {
       
       console.log('📊 MPLS SERVICE - Interfaces dos equipamentos conectados:', equipmentInterfaces);
       
+      // 3.5. Buscar detalhes das LAGs e seus membros via /customer-interface-report/
+      const lagMembersMap: any = {};
+      try {
+        const interfaceReport = await this.request<any>('/customer-interface-report/', {
+          params: { equipment: equipmentName }
+        });
+        
+        if (interfaceReport && interfaceReport.results) {
+          console.log('🔍 MPLS SERVICE - Processando interfaces para LAGs:', interfaceReport.results.length);
+          
+          // Mapear interfaces físicas para LAGs
+          interfaceReport.results.forEach((interfaceInfo: any) => {
+            const interfaceName = interfaceInfo.interface?.name;
+            const description = interfaceInfo.interface?.description || '';
+            
+            console.log(`🔍 Interface: ${interfaceName} - Descrição: ${description}`);
+            
+            // Detectar se a interface pertence a uma LAG pela descrição
+            const lagMatch = description.match(/LAG(\d+)/i);
+            if (lagMatch) {
+              const lagId = parseInt(lagMatch[1]);
+              const lagName = `lag-${lagId}`;
+              
+              console.log(`🔗 LAG detectada: ${lagName} para interface ${interfaceName}`);
+              
+              if (!lagMembersMap[lagName]) {
+                lagMembersMap[lagName] = {
+                  name: lagName,
+                  members: [],
+                  totalSpeed: 0,
+                  description: description.replace(/-P\d+-LAG\d+/i, '') // Remover sufixo específico
+                };
+                console.log(`📝 Nova LAG criada: ${lagName}`);
+              }
+              
+              // Adicionar membro à LAG
+              lagMembersMap[lagName].members.push({
+                name: interfaceName,
+                speed: interfaceInfo.interface?.speed || '10G',
+                description: description
+              });
+              
+              // Calcular velocidade total
+              const speed = this.extractInterfaceCapacity(interfaceName);
+              const speedValue = parseInt(speed.replace('G', '')) || 10;
+              lagMembersMap[lagName].totalSpeed += speedValue;
+              
+              console.log(`➕ Membro adicionado à ${lagName}: ${interfaceName} (${speed}) - Total: ${lagMembersMap[lagName].totalSpeed}G`);
+            } else {
+              console.log(`❌ Não é LAG: ${interfaceName} - ${description}`);
+            }
+          });
+          
+          // Atualizar descrições das LAGs
+          Object.keys(lagMembersMap).forEach(lagName => {
+            const lag = lagMembersMap[lagName];
+            if (lag.members.length > 0) {
+              // Extrair descrição limpa do primeiro membro
+              const firstMemberDesc = lag.members[0].description;
+              lag.description = firstMemberDesc.replace(/-P\d+-LAG\d+/i, '').trim();
+              lag.finalSpeed = `${lag.totalSpeed}G`;
+              
+              console.log(`🏷️ LAG ${lagName} finalizada:`, {
+                description: lag.description,
+                finalSpeed: lag.finalSpeed,
+                members: lag.members.length,
+                totalSpeed: lag.totalSpeed
+              });
+            }
+          });
+        }
+        
+        console.log('🔗 MPLS SERVICE - LAGs e seus membros mapeados:', lagMembersMap);
+      } catch (error) {
+        console.log('⚠️ MPLS SERVICE - Erro ao buscar membros das LAGs:', error);
+      }
+      
       // 4. Agora buscar dados complementares via /customer-report/ para VPNs específicas
       const customerReport = await this.request<any>('/customer-report/', {
         params: { customer: 'MEGALINK' }
@@ -425,14 +528,37 @@ class MplsService {
       }
       
       // 7. Converter resultados para o formato padrão usando a nova estrutura
-      const convertedResults: SearchResult[] = response.vpns.map((vpn: any, index: number) => {
+      const convertedResults: SearchResult[] = await Promise.all(response.vpns.map(async (vpn: any, index: number) => {
         // LÓGICA CORRETA:
         // - Interface LOCAL: Sempre do equipamento buscado (equipmentName)
         // - Interface REMOTA: Sempre do equipamento conectado (neighbor)
         
         // Interface LOCAL (do equipamento buscado - MA-BREJO-PE01)
         const localInterface = vpn.interface?.name || '';
-        const localInterfaceDetails = vpn.interface || {};
+        let localInterfaceDetails = vpn.interface || {};
+        
+        // ENRICH: Se for LAG, adicionar informações dos membros
+        console.log(`🔍 Verificando se ${localInterface} é LAG...`);
+        console.log(`🗂️ LAGs disponíveis:`, Object.keys(lagMembersMap));
+        
+        if (localInterface.startsWith('lag-') && lagMembersMap[localInterface]) {
+          const lagInfo = lagMembersMap[localInterface];
+          console.log(`🎯 LAG encontrada: ${localInterface}`, lagInfo);
+          
+          localInterfaceDetails = {
+            ...localInterfaceDetails,
+            description: lagInfo.description,
+            speed: lagInfo.finalSpeed,
+            lag_members: lagInfo.members.map((m: any) => m.name),
+            lag_members_details: lagInfo.members,
+            found_in_db: true,
+            note: `LAG com ${lagInfo.members.length} membros: ${lagInfo.members.map((m: any) => `${m.name} (${m.speed})`).join(', ')}`
+          };
+          console.log(`✅ LAG local enriquecida: ${localInterface} - ${lagInfo.description} - ${lagInfo.finalSpeed}`);
+          console.log(`📊 Interface details atualizada:`, localInterfaceDetails);
+        } else if (localInterface.startsWith('lag-')) {
+          console.log(`❌ LAG ${localInterface} não encontrada no mapa de LAGs`);
+        }
         
         // Interface REMOTA (do equipamento conectado - busca recursiva)
         let remoteInterface = '';
@@ -472,6 +598,62 @@ class MplsService {
           remoteInterfaceDetails = complementary.remote_interface_details || {};
         }
         
+        // ENRICH: Se interface remota for LAG, tentar buscar membros via busca recursiva nos outros equipamentos
+        if (remoteInterface.startsWith('lag-') && remoteEquipment) {
+          try {
+            const remoteInterfaceReport = await this.request<any>('/customer-interface-report/', {
+              params: { equipment: remoteEquipment }
+            });
+            
+            if (remoteInterfaceReport && remoteInterfaceReport.results) {
+              const remoteLagMembers: any[] = [];
+              let remoteLagTotalSpeed = 0;
+              let remoteLagDescription = '';
+              
+              remoteInterfaceReport.results.forEach((interfaceInfo: any) => {
+                const description = interfaceInfo.interface?.description || '';
+                const lagMatch = description.match(/LAG(\d+)/i);
+                
+                if (lagMatch) {
+                  const lagId = parseInt(lagMatch[1]);
+                  const expectedLagName = `lag-${lagId}`;
+                  
+                  if (expectedLagName === remoteInterface) {
+                    remoteLagMembers.push({
+                      name: interfaceInfo.interface?.name,
+                      speed: interfaceInfo.interface?.speed || '10G',
+                      description: description
+                    });
+                    
+                    const speed = this.extractInterfaceCapacity(interfaceInfo.interface?.name || '');
+                    const speedValue = parseInt(speed.replace('G', '')) || 10;
+                    remoteLagTotalSpeed += speedValue;
+                    
+                    if (!remoteLagDescription) {
+                      remoteLagDescription = description.replace(/-P\d+-LAG\d+/i, '').trim();
+                    }
+                  }
+                }
+              });
+              
+              if (remoteLagMembers.length > 0) {
+                remoteInterfaceDetails = {
+                  ...remoteInterfaceDetails,
+                  description: remoteLagDescription,
+                  speed: `${remoteLagTotalSpeed}G`,
+                  lag_members: remoteLagMembers.map((m: any) => m.name),
+                  lag_members_details: remoteLagMembers,
+                  found_in_db: true,
+                  note: `LAG remota com ${remoteLagMembers.length} membros: ${remoteLagMembers.map((m: any) => `${m.name} (${m.speed})`).join(', ')}`
+                };
+                console.log(`✅ LAG remota enriquecida: ${remoteInterface} (${remoteEquipment}) - ${remoteLagDescription} - ${remoteLagTotalSpeed}G`);
+              }
+            }
+          } catch (error) {
+            console.log(`⚠️ Erro ao buscar membros da LAG remota ${remoteInterface}:`, error);
+          }
+        }
+        
         // 3. Último fallback: informações básicas do neighbor
         if (!remoteInterface && vpn.neighbor?.hostname) {
           remoteInterface = 'N/A';
@@ -487,8 +669,22 @@ class MplsService {
         }
         
         // Extrair informações da interface e capacidade
-        const interfaceCapacity = this.extractInterfaceCapacity(localInterface);
-        const neighborInterfaceCapacity = this.extractInterfaceCapacity(remoteInterface);
+        let interfaceCapacity = this.extractInterfaceCapacity(localInterface);
+        let neighborInterfaceCapacity = this.extractInterfaceCapacity(remoteInterface);
+        
+        // Se for LAG local e temos informações enriquecidas, usar a velocidade calculada
+        if (localInterface.startsWith('lag-') && localInterfaceDetails.speed) {
+          interfaceCapacity = localInterfaceDetails.speed;
+          console.log(`🚀 Usando velocidade calculada da LAG local: ${interfaceCapacity}`);
+        }
+        
+        // Se for LAG remota e temos informações enriquecidas, usar a velocidade calculada
+        if (remoteInterface.startsWith('lag-') && remoteInterfaceDetails.speed) {
+          neighborInterfaceCapacity = remoteInterfaceDetails.speed;
+          console.log(`🚀 Usando velocidade calculada da LAG remota: ${neighborInterfaceCapacity}`);
+        }
+        
+        console.log(`📊 Capacidades finais - Local: ${interfaceCapacity}, Remota: ${neighborInterfaceCapacity}`);
         
         return {
           id: index,
@@ -533,7 +729,11 @@ class MplsService {
                 ...localInterfaceDetails,
                 found_in_db: localInterfaceDetails.found_in_db || false,
                 lag_members: localInterfaceDetails.lag_members || [],
-                note: localInterfaceDetails.note || ''
+                note: localInterfaceDetails.note || '',
+                // DEBUG: Garantir que os dados das LAGs sejam transferidos
+                debug_lag_members: localInterfaceDetails.lag_members,
+                debug_note: localInterfaceDetails.note,
+                debug_description: localInterfaceDetails.description
               },
               capacity: interfaceCapacity,
               media: localInterfaceDetails.type || 'physical',
@@ -589,7 +789,7 @@ class MplsService {
           neighbor_interface_description: remoteInterfaceDetails.description || '',
           neighbor_interface_found_in_db: remoteInterfaceDetails.found_in_db || false
         };
-      });
+      }));
       
       console.log('🎯 MPLS SERVICE - Total de VPNs encontradas para o equipamento:', convertedResults.length);
       console.log('📊 MPLS SERVICE - Dados do equipamento:', response.equipment);
@@ -617,7 +817,7 @@ class MplsService {
         
         while (hasMoreData && page <= 50) {
           try {
-            const resp = await this.request<any>('/search/', { 
+            const resp = await this.request<any>('/search/', {
               params: { 
                 q: query, 
                 page, 
@@ -656,7 +856,7 @@ class MplsService {
           
           while (offset < 1000) { // Limite de segurança
             try {
-              const resp = await this.request<any>('/search/', { 
+            const resp = await this.request<any>('/search/', {
                 params: { 
                   q: query, 
                   offset, 
@@ -673,7 +873,7 @@ class MplsService {
               
               // Adicionar todos os itens desta página
               allItems.push(...pageItems);
-              offset += pageItems.length;
+            offset += pageItems.length;
               
               // Se recebeu menos que o limit, provavelmente é a última página
               if (pageItems.length < limit) {
@@ -721,12 +921,12 @@ class MplsService {
       const mappedResults: SearchResult[] = items.map((item, index) => {
         const it = item as Record<string, any>;
         return ({
-          id: index,
+        id: index,
           equipment_name: it.equipment_name || '',
           equipment_location: it.location || it.equipment_location || '',
           backup_date: it.last_backup || it.backup_date || '',
-          raw_config: '',
-          // Dados detalhados do equipamento/VPN
+        raw_config: '',
+        // Dados detalhados do equipamento/VPN
           vpn_id: it.vpn_id,
           loopback_ip: it.loopback_ip,
           neighbor_ip: it.neighbor_ip,
@@ -740,17 +940,17 @@ class MplsService {
           vpws_groups: it.vpn_id ? [{
             id: it.vpn_id || index,
             name: `VPN ${it.vpn_id || 'N/A'}`,
-            vpns: [{
+          vpns: [{
               id: it.vpn_id || index,
               vpn_id: it.vpn_id || 0,
               name: it.description || `VPN ${it.vpn_id || 'N/A'}`
-            }]
-          }] : [],
+          }]
+        }] : [],
           customer_services: it.customers && (it.customers as string[]).length > 0 ? [{
-            id: index,
+          id: index,
             customer_name: (it.customers as string[])[0],
-            service_type: 'VPN'
-          }] : []
+          service_type: 'VPN'
+        }] : []
         });
       });
       
