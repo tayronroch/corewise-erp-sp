@@ -21,15 +21,34 @@ const MplsSearchSystem: React.FC = () => {
 
   useEffect(()=>{ if(filters.query.length>=2){ loadSuggestions(); } else { setSuggestions([]); setShowSuggestions(false);} }, [filters.query]);
 
-  const loadSuggestions = async () => { try { const s = await mplsService.getSearchSuggestions(filters.query); setSuggestions(s.map(x=>x.term)); setShowSuggestions(true);} catch{} };
+  const loadSuggestions = async () => { 
+    try { 
+      const s = await mplsService.getSearchSuggestions(filters.query); 
+      setSuggestions(s.map(x=>x.term)); 
+      setShowSuggestions(true);
+    } catch (error) {
+      console.error('Erro ao carregar sugestões:', error);
+    }
+  };
 
   const handleSearch = async () => {
-    if (!filters.query.trim()) return;
+    if (!filters.query.trim() && !filters.equipment.trim()) return;
     setIsLoading(true);
     setCurrentPage(1); // Reset para primeira página
     try {
-      console.log('🔍 Buscando por:', filters.query);
-      const data = await mplsService.intelligentSearch(filters.query);
+      console.log('🔍 Buscando por:', { query: filters.query, equipment: filters.equipment });
+      
+      let data: SearchResult[] = [];
+      
+      // Se temos filtro de equipamento, buscar por equipamento
+      if (filters.equipment.trim()) {
+        console.log('🔍 Buscando por equipamento específico:', filters.equipment);
+        data = await mplsService.intelligentSearch('', 'auto', filters.equipment);
+      } else {
+        // Busca normal por cliente
+        data = await mplsService.intelligentSearch(filters.query);
+      }
+      
       console.log('📊 Dados recebidos:', data);
       
       // Remover duplicatas baseado em vpn_id + equipment_name
@@ -94,7 +113,6 @@ const MplsSearchSystem: React.FC = () => {
 
   // Obter resultados da página atual
   const currentPageResults = getPaginatedResults();
-  const hasResults = Object.keys(currentPageResults).length > 0;
 
   return (
     <div className="max-w-7xl mx-auto p-1 md:p-0">
@@ -144,7 +162,6 @@ const MplsSearchSystem: React.FC = () => {
             <div className="flex flex-col md:flex-row items-start md:items-center gap-3 justify-between">
               <button type="submit" className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50" disabled={isLoading}><i className="fas fa-search"/>{isLoading?'Buscando...':'Buscar'}</button>
               <div className="flex items-center gap-2">
-                <a href="/customer-report" className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-cyan-600 text-white hover:bg-cyan-700"><i className="fas fa-user"/>Relatório de Cliente</a>
                 <button type="button" className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-slate-200 text-slate-800 hover:bg-slate-300" onClick={()=>{ setFilters({query:'',equipment:'',location:'',service_type:''}); setResults([]); setGroupedByEquipment({}); setCurrentPage(1); setTotalPages(1); setTotalResults(0);}}> <i className="fas fa-times"/>Limpar Filtros</button>
               </div>
             </div>
@@ -242,9 +259,8 @@ const MplsSearchSystem: React.FC = () => {
 
                   <div className="p-4">
                     {/* Cabeçalho de colunas */}
-                    <div className="hidden md:grid md:grid-cols-6 text-xs font-medium text-slate-500 border-b border-slate-200 pb-2">
+                    <div className="hidden md:grid md:grid-cols-4 text-xs font-medium text-slate-500 border-b border-slate-200 pb-2">
                       <div className="md:col-span-2">VPN / Destino</div>
-                      <div className="md:col-span-2">Interface / Velocidade</div>
                       <div>Encapsulamento</div>
                       <div className="text-right">Backup</div>
                     </div>
@@ -253,97 +269,109 @@ const MplsSearchSystem: React.FC = () => {
                       const enc = result.encapsulation || '';
                       const encType = enc.includes('qinq') ? 'qinq' : 'vlan';
                       const encValue = enc.replace(/^qinq:\s*/i, '').replace(/^vlan:\s*/i, '');
-                      const interfaceSpeed = result.access_interface?.includes('hundred-gigabit') ? '100G' : 
-                                           result.access_interface?.includes('twenty-five-g') ? '25G' : 
-                                           result.access_interface?.includes('ten-gigabit') ? '10G' : '';
                       
                       // Informações dos dois lados se disponíveis
                       const sideA = result.side_a_info;
                       const sideB = result.side_b_info;
                       
+                      // Determinar se há informações redundantes para consolidar
+                      const hasRedundantInfo = result.destination_info && 
+                        (result.destination_info.localInterface || result.destination_info.remoteInterface || 
+                         result.destination_info.sideAInterface || result.destination_info.sideBInterface);
+                      
                       return (
-                        <div key={idx} className={`py-3 grid grid-cols-1 md:grid-cols-6 gap-3 items-start text-sm ${idx % 2 === 0 ? 'bg-slate-50' : ''} md:bg-transparent md:hover:bg-slate-50 rounded-md px-2 md:px-0`}>
+                        <div key={idx} className={`py-3 grid grid-cols-1 md:grid-cols-4 gap-3 items-start text-sm ${idx % 2 === 0 ? 'bg-slate-50' : ''} md:bg-transparent md:hover:bg-slate-50 rounded-md px-2 md:px-0`}>
                           <div className="md:col-span-2 flex items-center gap-2 text-slate-700">
                             <i className="fas fa-sitemap text-slate-400"></i>
                             <span className="font-medium">VPN {result.vpn_id || 'N/A'}</span>
                             <div className="flex flex-col">
-                              <span className="text-slate-600">→ {result.neighbor_ip}</span>
-                              {result.neighbor_hostname && (
-                                <span className="text-emerald-600 text-xs">({result.neighbor_hostname})</span>
-                              )}
-                              {/* Mostrar informações adicionais de destino se disponível */}
+                              {/* Mostrar destino apenas se não for redundante */}
                               {result.destination_info && (
-                                <div className="text-xs mt-1">
+                                <>
                                   {!result.destination_info.isInDatabase && (
-                                    <div className="text-amber-600 bg-amber-50 px-2 py-1 rounded border border-amber-200">
+                                    <div className="text-amber-600 bg-amber-50 px-2 py-1 rounded border border-amber-200 text-xs mt-1">
                                       <i className="fas fa-exclamation-triangle mr-1"></i>
                                       Equipamento não capturado na base
                                     </div>
                                   )}
                                   {result.destination_info.isInDatabase && (
-                                    <div className="text-green-600 bg-green-50 px-2 py-1 rounded border border-green-200">
+                                    <div className="text-green-600 bg-green-50 px-2 py-1 rounded border border-green-200 text-xs mt-1">
                                       <i className="fas fa-check-circle mr-1"></i>
                                       Equipamento na base
                                     </div>
                                   )}
                                   {result.destination_info.hostname && result.destination_info.hostname !== 'N/A' && (
-                                    <div className="text-slate-500">
+                                    <div className="text-slate-600 text-xs">
                                       <span className="font-medium">Destino:</span> {result.destination_info.hostname}
                                     </div>
                                   )}
                                   {result.destination_info.neighborIp && result.destination_info.neighborIp !== 'N/A' && (
-                                    <div className="text-slate-500">
-                                      <span className="font-medium">IP Vizinho:</span> {result.destination_info.neighborIp}
+                                    <div className="text-slate-600 text-xs">
+                                      <span className="font-medium">IP:</span> {result.destination_info.neighborIp}
                                     </div>
                                   )}
-                                  {/* Mostrar informações do VPWS Group se disponível */}
-                                  {result.destination_info.vpwsGroup && (
-                                    <div className="text-blue-600 bg-blue-50 px-2 py-1 rounded border border-blue-200 mt-1">
-                                      <i className="fas fa-network-wired mr-1"></i>
-                                      VPWS: {result.destination_info.vpwsGroup.name}
-                                    </div>
-                                  )}
-                                  {/* Mostrar informações da interface do lado B */}
-                                  {result.destination_info.sideBInterface && (
-                                    <div className="text-purple-600 bg-purple-50 px-2 py-1 rounded border border-purple-200 mt-1">
-                                      <i className="fas fa-ethernet mr-1"></i>
-                                      <span className="font-medium">Lado B:</span> {result.destination_info.sideBInterface.name}
-                                      {result.destination_info.sideBInterface.capacity && result.destination_info.sideBInterface.capacity !== 'N/A' && (
-                                        <span className="ml-2 text-xs bg-purple-200 text-purple-800 px-2 py-0.5 rounded">
-                                          {result.destination_info.sideBInterface.capacity}
-                                        </span>
-                                      )}
-                                      {result.destination_info.sideBInterface.media && (
-                                        <span className="ml-2 text-xs text-purple-600">
-                                          ({result.destination_info.sideBInterface.media})
-                                        </span>
-                                      )}
-                                    </div>
-                                  )}
-                                </div>
+                                </>
                               )}
+                              
+                                                             {/* Mostrar informações consolidadas dos lados A e B */}
+                               {hasRedundantInfo && result.destination_info && (
+                                 <div className="mt-2 space-y-1">
+                                   {/* Priorizar novas labels LOCAL/REMOTA */}
+                                   {result.destination_info.localInterface && (
+                                     <div className="text-xs text-blue-600 bg-blue-50 px-2 py-1 rounded border border-blue-200">
+                                       <i className="fas fa-ethernet mr-1"></i>
+                                       <span className="font-medium">LOCAL:</span> {result.destination_info.localInterface.name}
+                                       {result.destination_info.localInterface.capacity && result.destination_info.localInterface.capacity !== 'N/A' && (
+                                         <span className="ml-2 text-xs bg-blue-200 text-blue-800 px-1 py-0.5 rounded">
+                                           {result.destination_info.localInterface.capacity}
+                                         </span>
+                                       )}
+                                     </div>
+                                   )}
+                                   {result.destination_info.remoteInterface && (
+                                     <div className="text-xs text-purple-600 bg-purple-50 px-2 py-1 rounded border border-purple-200">
+                                       <i className="fas fa-ethernet mr-1"></i>
+                                       <span className="font-medium">REMOTA:</span> {result.destination_info.remoteInterface.name}
+                                       {result.destination_info.remoteInterface.capacity && result.destination_info.remoteInterface.capacity !== 'N/A' && (
+                                         <span className="ml-2 text-xs bg-purple-200 text-purple-800 px-1 py-0.5 rounded">
+                                           {result.destination_info.remoteInterface.capacity}
+                                         </span>
+                                       )}
+                                     </div>
+                                   )}
+                                   
+                                   {/* Fallback para compatibilidade (A/B) */}
+                                   {!result.destination_info.localInterface && !result.destination_info.remoteInterface && (
+                                     <>
+                                       {result.destination_info.sideAInterface && (
+                                         <div className="text-xs text-indigo-600 bg-indigo-50 px-2 py-1 rounded border border-indigo-200">
+                                           <i className="fas fa-ethernet mr-1"></i>
+                                           <span className="font-medium">A:</span> {result.destination_info.sideAInterface.name}
+                                           {result.destination_info.sideAInterface.capacity && result.destination_info.sideAInterface.capacity !== 'N/A' && (
+                                             <span className="ml-2 text-xs bg-indigo-200 text-indigo-800 px-1 py-0.5 rounded">
+                                               {result.destination_info.sideAInterface.capacity}
+                                             </span>
+                                           )}
+                                         </div>
+                                       )}
+                                       {result.destination_info.sideBInterface && (
+                                         <div className="text-xs text-purple-600 bg-purple-50 px-2 py-1 rounded border border-purple-200">
+                                           <i className="fas fa-ethernet mr-1"></i>
+                                           <span className="font-medium">B:</span> {result.destination_info.sideBInterface.name}
+                                           {result.destination_info.sideBInterface.capacity && result.destination_info.sideBInterface.capacity !== 'N/A' && (
+                                             <span className="ml-2 text-xs bg-purple-200 text-purple-800 px-1 py-0.5 rounded">
+                                               {result.destination_info.sideBInterface.capacity}
+                                             </span>
+                                           )}
+                                         </div>
+                                       )}
+                                     </>
+                                   )}
+                                 </div>
+                               )}
                             </div>
                           </div>
-                          <div className="md:col-span-2 flex items-center gap-2 text-slate-700">
-                            <i className="fas fa-ethernet text-slate-400"></i>
-                            <div className="flex flex-col">
-                              <span className="font-mono text-xs">{result.access_interface || '-'}</span>
-                              {interfaceSpeed && (
-                                <span className="text-slate-500 text-xs">({interfaceSpeed})</span>
-                              )}
-                              {/* Mostrar informações do lado oposto se disponível */}
-                              {sideA && sideB && (
-                                <div className="text-xs text-slate-500 mt-1">
-                                  <div className="flex items-center gap-1">
-                                    <span className="text-blue-600">A:</span> {sideA.hostname}
-                                  </div>
-                                  <div className="flex items-center gap-1">
-                                    <span className="text-green-600">B:</span> {sideB.hostname}
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                          </div>
+                          
                           <div className="md:col-span-1 flex items-center gap-2 text-slate-700">
                             <i className="fas fa-layer-group text-slate-400"></i>
                             <span className="inline-flex items-center gap-2">
@@ -351,6 +379,7 @@ const MplsSearchSystem: React.FC = () => {
                               <span className="px-2 py-0.5 rounded text-xs bg-slate-200 text-slate-700">{encValue || '-'}</span>
                             </span>
                           </div>
+                          
                           <div className="md:col-span-1 text-right text-slate-500">
                             {result.backup_date && <span className="text-xs">{formatDate(result.backup_date)}</span>}
                           </div>
