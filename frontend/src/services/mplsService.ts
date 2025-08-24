@@ -3,6 +3,7 @@
  * Busca, relatórios e análise de equipamentos MPLS
  */
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { api } from './api';
 
 // MPLS Search Interfaces
@@ -92,6 +93,8 @@ export interface CustomerReportData {
   total_interfaces: number;
   total_services: number;
   groups: CustomerReportGroup[];
+  // Dados crus por VPN (para renderização estilo Lado A/B)
+  vpns?: any[];
 }
 
 class MplsService {
@@ -113,17 +116,88 @@ class MplsService {
   // MPLS Search Methods
   async intelligentSearch(query: string, searchType: string = 'auto'): Promise<SearchResult[]> {
     try {
-      // Usar a API de busca que está funcionando (api_search do sistema original)
-      const response = await this.request<{
-        results: any[];
-        total: number;
-        query: string;
-      }>('/search/', {
-        params: { q: query }
+      console.log('🚀 MPLS SERVICE - Intelligent search chamada:', { query, searchType });
+
+      // Função auxiliar para detectar forma de paginação e consolidar resultados
+      const collectAllResults = async (): Promise<{ items: any[]; total: number; meta: any }> => {
+        // Primeira tentativa: enviar vários parâmetros de paginação comuns
+        const baseParams: any = {
+          q: query,
+          page: 1,
+          page_size: 1000,
+          limit: 1000,
+          size: 1000,
+          per_page: 1000,
+          all: true,
+        };
+
+        const first = await this.request<any>('/search/', { params: baseParams });
+        let items: any[] = Array.isArray(first) ? first : (first.results || first.data?.results || first.items || []);
+        const totalFromResponse: number = first.total ?? first.count ?? first.data?.count ?? first.results_count ?? items.length ?? 0;
+        let nextUrl: string | null = first.next ?? first.data?.next ?? null;
+
+        // Caso haja paginação por "next" (padrão DRF), seguir links
+        let safety = 0;
+        while (nextUrl && safety < 50) {
+          try {
+            const nextResp = await api({ url: nextUrl, method: 'GET' });
+            const nextData = nextResp.data;
+            const nextItems = nextData.results || [];
+            items = items.concat(nextItems);
+            nextUrl = nextData.next || null;
+            safety += 1;
+          } catch (e) {
+            console.warn('⚠️ MPLS SERVICE - Falha ao seguir paginação via next:', e);
+            break;
+          }
+        }
+
+        // Se ainda houver chance de mais páginas, tentar paginação por page até esgotar
+        if (items.length <= totalFromResponse) {
+          let page = 2;
+          while (page <= 50) {
+            const resp = await this.request<any>('/search/', {
+              params: { ...baseParams, page, page_size: 1000 }
+            });
+            const pageItems = resp.results || resp.data?.results || resp.items || [];
+            if (!pageItems.length) break;
+            items = items.concat(pageItems);
+            page += 1;
+          }
+        }
+
+        // Como último fallback tentar offset/limit até esgotar
+        if (items.length <= totalFromResponse) {
+          let offset = items.length;
+          const step = 200;
+          let guard = 0;
+          while (guard < 50) {
+            const resp = await this.request<any>('/search/', {
+              params: { q: query, limit: step, offset }
+            });
+            const pageItems = resp.results || resp.data?.results || resp.items || [];
+            if (!pageItems.length) break;
+            items = items.concat(pageItems);
+            offset += pageItems.length;
+            guard += 1;
+          }
+        }
+
+        const finalTotal = Math.max(totalFromResponse || 0, items.length);
+        return { items, total: finalTotal, meta: first };
+      };
+
+      const { items, total, meta } = await collectAllResults();
+
+      console.log('🔥 MPLS SERVICE - Search API response (consolidado):', { total, received: items.length });
+      console.log('📊 MPLS SERVICE - Search stats:', {
+        resultsCount: items.length || 0,
+        total: total,
+        query: meta.query || query
       });
-      
+
       // Mapear os dados da API para o formato esperado pelo frontend
-      const mappedResults = response.results.map((item, index) => ({
+      const mappedResults = items.map((item, index) => ({
         id: index,
         equipment_name: item.equipment_name || '',
         equipment_location: item.location || item.equipment_location || '',
@@ -157,8 +231,9 @@ class MplsService {
       }));
       
       // Adicionar metadados aos resultados para o frontend
-      (mappedResults as any).total = response.total;
-      (mappedResults as any).query = response.query;
+      // Garantir que total corresponda ao que foi realmente reunido
+      (mappedResults as any).total = mappedResults.length;
+      (mappedResults as any).query = meta.query || query;
       
       return mappedResults;
     } catch (error) {
@@ -210,48 +285,95 @@ class MplsService {
         params: { customer: customerName }
       });
       
-      // Verificar se a resposta tem a estrutura esperada
-      if (response && response.equipment_groups) {
-        // Mapear a estrutura real da API para o formato esperado pelo frontend
-        const groups = response.equipment_groups.map((group: any) => ({
-          location: group.location || 'Localização não especificada',
-          equipments: [{
-            name: group.equipment_name,
-            last_backup: group.services?.[0]?.last_backup || '',
-            interfaces: group.services?.map((service: any) => ({
-              name: service.access_interface || 'Interface não especificada',
-              description: service.interface_details?.description || '',
-              bandwidth: service.bandwidth || '',
-              vlan: service.encapsulation || '',
-              ip_address: service.neighbor_ip || '',
-              status: 'active'
-            })) || []
-          }]
+      console.log('🔥 MPLS SERVICE - Customer report API response:', response);
+      console.log('🔍 MPLS SERVICE - Response structure check:', {
+        hasResults: !!response.results,
+        resultsLength: response.results?.length || 0,
+        hasCustomerName: !!response.customer_name,
+        hasTotalVpns: !!response.total_vpns
+      });
+      
+      // Processar a nova estrutura da API com results contendo VPNs individuais
+      if (response && response.results) {
+        // Agrupar por localização de equipamento
+        const locationGroups: { [key: string]: any[] } = {};
+        
+        response.results.forEach((vpn: any) => {
+          // Processar lado A
+          if (vpn.side_a && vpn.side_a.equipment) {
+            const location = vpn.side_a.equipment.location || 'Localização não especificada';
+            if (!locationGroups[location]) {
+              locationGroups[location] = [];
+            }
+            locationGroups[location].push({
+              vpn_id: vpn.vpn_id,
+              side: 'A',
+              equipment_name: vpn.side_a.equipment.hostname,
+              location: vpn.side_a.equipment.location,
+              loopback_ip: vpn.side_a.equipment.loopback_ip,
+              neighbor_hostname: vpn.side_a.neighbor?.hostname,
+              neighbor_ip: vpn.side_a.neighbor?.loopback_ip,
+              access_interface: vpn.side_a.access_interface,
+              interface_details: vpn.side_a.access_interface_details,
+              vpws_group: vpn.side_a.vpws_group,
+              encapsulation: vpn.encapsulation,
+              description: vpn.description,
+              pw_type: vpn.pw_type
+            });
+          }
+          
+          // Processar lado B
+          if (vpn.side_b && vpn.side_b.equipment) {
+            const location = vpn.side_b.equipment.location || 'Localização não especificada';
+            if (!locationGroups[location]) {
+              locationGroups[location] = [];
+            }
+            locationGroups[location].push({
+              vpn_id: vpn.vpn_id,
+              side: 'B',
+              equipment_name: vpn.side_b.equipment.hostname,
+              location: vpn.side_b.equipment.location,
+              loopback_ip: vpn.side_b.equipment.loopback_ip,
+              neighbor_hostname: vpn.side_b.neighbor?.hostname,
+              neighbor_ip: vpn.side_b.neighbor?.loopback_ip,
+              access_interface: vpn.side_b.access_interface,
+              interface_details: vpn.side_b.access_interface_details,
+              vpws_group: vpn.side_b.vpws_group,
+              encapsulation: vpn.encapsulation,
+              description: vpn.description,
+              pw_type: vpn.pw_type
+            });
+          }
+        });
+        
+        // Converter para o formato esperado pelo frontend
+        const groups = Object.keys(locationGroups).map(location => ({
+          location,
+          equipments: this.groupByEquipment(locationGroups[location])
         }));
         
         return {
-          customer_name: response.customer || customerName,
-          total_locations: response.summary?.locations?.length || 0,
-          total_equipments: response.summary?.total_equipment || response.equipment_groups?.length || 0,
-          total_interfaces: response.equipment_groups?.reduce((total: number, group: any) => 
-            total + (group.services?.length || 0), 0) || 0,
-          total_services: response.summary?.total_services || 0,
-          groups: groups
+          customer_name: response.customer_name || customerName,
+          total_locations: Object.keys(locationGroups).length,
+          total_equipments: groups.reduce((total, group) => total + group.equipments.length, 0),
+          total_interfaces: response.total_vpns || 0,
+          total_services: response.total_vpns || 0,
+          groups: groups,
+          vpns: response.results
         };
       }
       
-      // Se não tiver a estrutura esperada, criar uma estrutura padrão
+      // Se não tiver a estrutura esperada, retornar estrutura vazia
       return {
         customer_name: customerName,
-        total_locations: response?.summary?.locations?.length || 0,
-        total_equipments: response?.summary?.total_equipment || 0,
+        total_locations: 0,
+        total_equipments: 0,
         total_interfaces: 0,
-        total_services: response?.summary?.total_services || 0,
+        total_services: 0,
         groups: []
       };
     } catch (error) {
       console.error('Erro ao buscar relatório do cliente:', error);
-      // Retornar estrutura vazia em caso de erro
       return {
         customer_name: customerName,
         total_locations: 0,
@@ -261,6 +383,38 @@ class MplsService {
         groups: []
       };
     }
+  }
+
+  private groupByEquipment(items: any[]): any[] {
+    const equipmentGroups: { [key: string]: any } = {};
+    
+    items.forEach(item => {
+      const equipmentName = item.equipment_name;
+      if (!equipmentGroups[equipmentName]) {
+        equipmentGroups[equipmentName] = {
+          name: equipmentName,
+          location: item.location,
+          loopback_ip: item.loopback_ip,
+          last_backup: '', // TODO: Implementar quando disponível na API
+          interfaces: []
+        };
+      }
+      
+      equipmentGroups[equipmentName].interfaces.push({
+        vpn_id: item.vpn_id,
+        side: item.side,
+        name: item.access_interface,
+        description: item.description,
+        neighbor_hostname: item.neighbor_hostname,
+        neighbor_ip: item.neighbor_ip,
+        vpws_group: item.vpws_group,
+        encapsulation: item.encapsulation,
+        bandwidth: item.interface_details?.speed || '',
+        status: 'active'
+      });
+    });
+    
+    return Object.values(equipmentGroups);
   }
 
   async exportCustomerReportExcel(customerName: string): Promise<void> {

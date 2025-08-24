@@ -1,107 +1,69 @@
 /**
- * MPLS Analyzer Dashboard - CoreWise
- * Tela principal do analisador MPLS com busca e relatórios
+ * MPLS Analyzer Dashboard — versão alto contraste
  */
-
 import React, { useState } from 'react';
-import IntelligentSearchComponent from './intelligent-search';
+import MplsSearchSystem from './mpls-search-system';
 import CustomerReportComponent from './customer-report';
-import AdvancedSearchComponent from './advanced-search';
-import './mpls-analyzer-dashboard.css';
 
 interface MplsAnalyzerDashboardProps {
   onBack?: () => void;
 }
 
+const TabButton: React.FC<{active:boolean; onClick:()=>void; children:React.ReactNode}> = ({active,onClick,children}) => (
+  <button
+    onClick={onClick}
+    className={[
+      'px-4 py-2 text-sm font-medium rounded-md transition',
+      active
+        ? 'bg-slate-900 text-white shadow'
+        : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'
+    ].join(' ')}
+  >
+    {children}
+  </button>
+);
+
 const MplsAnalyzerDashboard: React.FC<MplsAnalyzerDashboardProps> = ({ onBack }) => {
-  const [activeTab, setActiveTab] = useState<'search' | 'reports' | 'advanced'>('search');
+  const [activeTab, setActiveTab] = useState<'search' | 'reports'>('search');
 
   return (
-    <div className="mpls-analyzer-dashboard">
-      <div className="dashboard-container">
-        {/* Header */}
-        <div className="dashboard-header">
-          <div className="header-content">
-            <div className="header-left">
-              <h1 className="dashboard-title">
-                <span className="title-icon">🔍</span>
-                MPLS Analyzer
-              </h1>
-              <p className="dashboard-description">
-                Sistema de análise, busca e relatórios de equipamentos MPLS
-              </p>
-            </div>
-            {onBack && (
-              <div className="header-right">
-                <button onClick={onBack} className="back-button">
-                  ← Voltar ao Sistema
-                </button>
-              </div>
-            )}
+    <div className="min-h-screen bg-slate-50 text-slate-900">
+      <header className="border-b border-slate-200 bg-white">
+        <div className="max-w-7xl mx-auto px-4 py-6 flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">MPLS Analyzer</h1>
+            <p className="text-slate-600">Sistema de análise, busca e relatórios de equipamentos MPLS</p>
           </div>
+          {onBack && (
+            <button
+              onClick={onBack}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+            >
+              <span>←</span> Voltar ao Sistema
+            </button>
+          )}
         </div>
-        
+      </header>
 
-        {/* Navigation Tabs */}
-        <div className="navigation-tabs">
-          <div className="tabs-container">
-            <button
-              onClick={() => setActiveTab('search')}
-              className={`tab-button ${activeTab === 'search' ? 'active' : ''}`}
-            >
-              <span className="tab-icon">🔍</span>
-              Busca Inteligente
-            </button>
-            <button
-              onClick={() => setActiveTab('advanced')}
-              className={`tab-button ${activeTab === 'advanced' ? 'active' : ''}`}
-            >
-              <span className="tab-icon">⚙️</span>
-              Busca Avançada
-            </button>
-            <button
-              onClick={() => setActiveTab('reports')}
-              className={`tab-button ${activeTab === 'reports' ? 'active' : ''}`}
-            >
-              <span className="tab-icon">📊</span>
-              Relatórios de Cliente
-            </button>
-          </div>
+      <main className="max-w-7xl mx-auto px-4 py-6">
+        <div className="flex items-center gap-2 mb-4">
+          <TabButton active={activeTab==='search'} onClick={()=>setActiveTab('search')}>🔎 Busca Inteligente</TabButton>
+          <TabButton active={activeTab==='reports'} onClick={()=>setActiveTab('reports')}>📊 Relatórios de Cliente</TabButton>
         </div>
 
-        {/* Tab Content */}
-        <div className="tab-content">
-          {activeTab === 'search' && (
-            <div className="content-panel">
-              <div className="panel-header">
-                <h2>Busca Inteligente</h2>
-                <p>Digite IPs, MACs, VPN IDs, VLANs, interfaces, números de série ou texto livre</p>
-              </div>
-              <IntelligentSearchComponent />
-            </div>
-          )}
-
-          {activeTab === 'advanced' && (
-            <div className="content-panel">
-              <div className="panel-header">
-                <h2>Busca Avançada</h2>
-                <p>Sistema completo de busca com filtros e opções avançadas</p>
-              </div>
-              <AdvancedSearchComponent />
-            </div>
-          )}
-
+        <section className="bg-white border border-slate-200 rounded-xl shadow-sm p-5">
+          {activeTab === 'search' && <MplsSearchSystem />}
           {activeTab === 'reports' && (
-            <div className="content-panel">
-              <div className="panel-header">
-                <h2>Relatórios de Cliente</h2>
-                <p>Visualize equipamentos, interfaces e serviços agrupados por cliente</p>
+            <div>
+              <div className="mb-4">
+                <h2 className="text-xl font-semibold">Relatórios de Cliente</h2>
+                <p className="text-slate-600">Visualize equipamentos, interfaces e serviços agrupados por cliente</p>
               </div>
               <CustomerReportComponent />
             </div>
           )}
-        </div>
-      </div>
+        </section>
+      </main>
     </div>
   );
 };

@@ -4,7 +4,6 @@ export { default as MplsAnalyzerDashboard } from './mpls-analyzer-dashboard';
 // Individual MPLS Components
 export { default as IntelligentSearch } from './intelligent-search';
 export { default as CustomerReport } from './customer-report';
-export { default as AdvancedSearch } from './advanced-search';
 export { default as NetworkManagement } from './network-management';
 export { default as MplsSearchSystem } from './mpls-search-system';
 
