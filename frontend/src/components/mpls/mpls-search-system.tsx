@@ -256,6 +256,11 @@ const MplsSearchSystem: React.FC = () => {
                       const interfaceSpeed = result.access_interface?.includes('hundred-gigabit') ? '100G' : 
                                            result.access_interface?.includes('twenty-five-g') ? '25G' : 
                                            result.access_interface?.includes('ten-gigabit') ? '10G' : '';
+                      
+                      // Informações dos dois lados se disponíveis
+                      const sideA = result.side_a_info;
+                      const sideB = result.side_b_info;
+                      
                       return (
                         <div key={idx} className={`py-3 grid grid-cols-1 md:grid-cols-6 gap-3 items-start text-sm ${idx % 2 === 0 ? 'bg-slate-50' : ''} md:bg-transparent md:hover:bg-slate-50 rounded-md px-2 md:px-0`}>
                           <div className="md:col-span-2 flex items-center gap-2 text-slate-700">
@@ -266,6 +271,57 @@ const MplsSearchSystem: React.FC = () => {
                               {result.neighbor_hostname && (
                                 <span className="text-emerald-600 text-xs">({result.neighbor_hostname})</span>
                               )}
+                              {/* Mostrar informações adicionais de destino se disponível */}
+                              {result.destination_info && (
+                                <div className="text-xs mt-1">
+                                  {!result.destination_info.isInDatabase && (
+                                    <div className="text-amber-600 bg-amber-50 px-2 py-1 rounded border border-amber-200">
+                                      <i className="fas fa-exclamation-triangle mr-1"></i>
+                                      Equipamento não capturado na base
+                                    </div>
+                                  )}
+                                  {result.destination_info.isInDatabase && (
+                                    <div className="text-green-600 bg-green-50 px-2 py-1 rounded border border-green-200">
+                                      <i className="fas fa-check-circle mr-1"></i>
+                                      Equipamento na base
+                                    </div>
+                                  )}
+                                  {result.destination_info.hostname && result.destination_info.hostname !== 'N/A' && (
+                                    <div className="text-slate-500">
+                                      <span className="font-medium">Destino:</span> {result.destination_info.hostname}
+                                    </div>
+                                  )}
+                                  {result.destination_info.neighborIp && result.destination_info.neighborIp !== 'N/A' && (
+                                    <div className="text-slate-500">
+                                      <span className="font-medium">IP Vizinho:</span> {result.destination_info.neighborIp}
+                                    </div>
+                                  )}
+                                  {/* Mostrar informações do VPWS Group se disponível */}
+                                  {result.destination_info.vpwsGroup && (
+                                    <div className="text-blue-600 bg-blue-50 px-2 py-1 rounded border border-blue-200 mt-1">
+                                      <i className="fas fa-network-wired mr-1"></i>
+                                      VPWS: {result.destination_info.vpwsGroup.name}
+                                    </div>
+                                  )}
+                                  {/* Mostrar informações da interface do lado B */}
+                                  {result.destination_info.sideBInterface && (
+                                    <div className="text-purple-600 bg-purple-50 px-2 py-1 rounded border border-purple-200 mt-1">
+                                      <i className="fas fa-ethernet mr-1"></i>
+                                      <span className="font-medium">Lado B:</span> {result.destination_info.sideBInterface.name}
+                                      {result.destination_info.sideBInterface.capacity && result.destination_info.sideBInterface.capacity !== 'N/A' && (
+                                        <span className="ml-2 text-xs bg-purple-200 text-purple-800 px-2 py-0.5 rounded">
+                                          {result.destination_info.sideBInterface.capacity}
+                                        </span>
+                                      )}
+                                      {result.destination_info.sideBInterface.media && (
+                                        <span className="ml-2 text-xs text-purple-600">
+                                          ({result.destination_info.sideBInterface.media})
+                                        </span>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
                             </div>
                           </div>
                           <div className="md:col-span-2 flex items-center gap-2 text-slate-700">
@@ -274,6 +330,17 @@ const MplsSearchSystem: React.FC = () => {
                               <span className="font-mono text-xs">{result.access_interface || '-'}</span>
                               {interfaceSpeed && (
                                 <span className="text-slate-500 text-xs">({interfaceSpeed})</span>
+                              )}
+                              {/* Mostrar informações do lado oposto se disponível */}
+                              {sideA && sideB && (
+                                <div className="text-xs text-slate-500 mt-1">
+                                  <div className="flex items-center gap-1">
+                                    <span className="text-blue-600">A:</span> {sideA.hostname}
+                                  </div>
+                                  <div className="flex items-center gap-1">
+                                    <span className="text-green-600">B:</span> {sideB.hostname}
+                                  </div>
+                                </div>
                               )}
                             </div>
                           </div>

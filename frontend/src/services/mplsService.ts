@@ -41,6 +41,39 @@ export interface SearchResult {
     text: string;
     line_number: number;
   }>;
+  // Informações adicionais para cada lado (A e B)
+  side_a_info?: {
+    hostname: string;
+    location: string;
+    loopback_ip: string;
+    access_interface: string;
+    interface_details: any;
+  };
+  side_b_info?: {
+    hostname: string;
+    location: string;
+    loopback_ip: string;
+    access_interface: string;
+    interface_details: any;
+  };
+  // Informações de destino para casos onde o equipamento não está na base
+  destination_info?: {
+    hostname: string;
+    ip: string;
+    isInDatabase: boolean;
+    neighborIp: string;
+    vpwsGroup?: {
+      name: string;
+      id: number;
+      // Outros campos do vpws_group se necessário
+    } | null;
+    sideBInterface?: {
+      name: string;
+      details: any;
+      capacity: string;
+      media: string;
+    };
+  };
 }
 
 export interface SearchSuggestion {
@@ -136,21 +169,60 @@ class MplsService {
       
       // Converter os dados do relatório para o formato de busca
       const convertedResults: SearchResult[] = [];
+      const processedVpns = new Set<number>(); // Para evitar duplicação de VPNs
       
       response.results.forEach((vpn: any, index: number) => {
-        // Processar lado A
-        if (vpn.side_a && vpn.side_a.equipment) {
+        // Verificar se já processamos esta VPN
+        if (processedVpns.has(vpn.vpn_id)) {
+          return; // Pular se já foi processada
+        }
+        
+        processedVpns.add(vpn.vpn_id);
+        
+        // Criar um resultado consolidado com informações de ambos os lados
+        const sideA = vpn.side_a?.equipment;
+        const sideB = vpn.side_b?.equipment;
+        
+        // Usar o lado A como equipamento principal (ou o primeiro disponível)
+        const mainEquipment = sideA || sideB;
+        const neighborEquipment = sideA ? sideB : sideA;
+        
+        // Capturar informações de destino mesmo quando o equipamento não está na base
+        const destinationInfo = {
+          hostname: vpn.side_a?.neighbor?.hostname || vpn.side_b?.neighbor?.hostname || 
+                   neighborEquipment?.hostname || 
+                   // Tentar extrair do vpws_group se disponível
+                   vpn.side_a?.vpws_group?.name || vpn.side_b?.vpws_group?.name || 'N/A',
+          ip: vpn.side_a?.neighbor?.loopback_ip || vpn.side_b?.neighbor?.loopback_ip || 
+               neighborEquipment?.loopback_ip || 'N/A',
+          // Se não temos o equipamento na base, usar informações do neighbor ou vpws_group
+          isInDatabase: !!(neighborEquipment && neighborEquipment.hostname),
+          // Capturar IP do vizinho mesmo quando o equipamento principal não está na base
+          neighborIp: vpn.side_a?.neighbor?.loopback_ip || vpn.side_b?.neighbor?.loopback_ip || 
+                     (sideA ? sideB?.loopback_ip : sideA?.loopback_ip) || 'N/A',
+          // Informações do vpws_group para equipamentos capturados
+          vpwsGroup: vpn.side_a?.vpws_group || vpn.side_b?.vpws_group || null,
+          // Informações da interface do lado B (destino)
+          sideBInterface: {
+            name: vpn.side_b?.access_interface || vpn.side_a?.access_interface || 'N/A',
+            details: vpn.side_b?.access_interface_details || vpn.side_a?.access_interface_details || null,
+            capacity: this.extractInterfaceCapacity(vpn.side_b?.access_interface || vpn.side_a?.access_interface || ''),
+            media: vpn.side_b?.access_interface_details?.media || vpn.side_a?.access_interface_details?.media || 'physical'
+          }
+        };
+        
+        if (mainEquipment) {
           convertedResults.push({
-            id: index * 2,
-            equipment_name: vpn.side_a.equipment.hostname || '',
-            equipment_location: vpn.side_a.equipment.location || '',
-            backup_date: vpn.side_a.equipment.last_backup || '',
+            id: index,
+            equipment_name: mainEquipment.hostname || '',
+            equipment_location: mainEquipment.location || '',
+            backup_date: mainEquipment.last_backup || '',
             raw_config: '',
             vpn_id: vpn.vpn_id,
-            loopback_ip: vpn.side_a.equipment.loopback_ip || '',
-            neighbor_ip: vpn.side_a.neighbor?.loopback_ip || vpn.side_b?.equipment?.loopback_ip || '',
-            neighbor_hostname: vpn.side_a.neighbor?.hostname || vpn.side_b?.equipment?.hostname || '',
-            access_interface: vpn.side_a.access_interface || '',
+            loopback_ip: mainEquipment.loopback_ip || '',
+            neighbor_ip: destinationInfo.ip,
+            neighbor_hostname: destinationInfo.hostname,
+            access_interface: vpn.side_a?.access_interface || vpn.side_b?.access_interface || '',
             encapsulation: vpn.encapsulation || '',
             description: vpn.description || '',
             group_name: '',
@@ -169,47 +241,30 @@ class MplsService {
               id: index,
               customer_name: query,
               service_type: 'VPN'
-            }]
-          });
-        }
-        
-        // Processar lado B
-        if (vpn.side_b && vpn.side_b.equipment) {
-          convertedResults.push({
-            id: index * 2 + 1,
-            equipment_name: vpn.side_b.equipment.hostname || '',
-            equipment_location: vpn.side_b.equipment.location || '',
-            backup_date: vpn.side_b.equipment.last_backup || '',
-            raw_config: '',
-            vpn_id: vpn.vpn_id,
-            loopback_ip: vpn.side_b.equipment.loopback_ip || '',
-            neighbor_ip: vpn.side_b.neighbor?.loopback_ip || vpn.side_a?.equipment?.loopback_ip || '',
-            neighbor_hostname: vpn.side_b.neighbor?.hostname || vpn.side_a?.equipment?.hostname || '',
-            access_interface: vpn.side_b.access_interface || '',
-            encapsulation: vpn.encapsulation || '',
-            description: vpn.description || '',
-            group_name: '',
-            customers: [query],
-            highlights: [],
-            vpws_groups: vpn.vpn_id ? [{
-              id: vpn.vpn_id,
-              name: `VPN ${vpn.vpn_id}`,
-              vpns: [{
-                id: vpn.vpn_id,
-                vpn_id: vpn.vpn_id,
-                name: vpn.description || `VPN ${vpn.vpn_id}`
-              }]
-            }] : [],
-            customer_services: [{
-              id: index,
-              customer_name: query,
-              service_type: 'VPN'
-            }]
+            }],
+            // Adicionar informações dos dois lados para contexto completo
+            side_a_info: sideA ? {
+              hostname: sideA.hostname || '',
+              location: sideA.location || '',
+              loopback_ip: sideA.loopback_ip || '',
+              access_interface: vpn.side_a?.access_interface || '',
+              interface_details: vpn.side_a?.access_interface_details
+            } : undefined,
+            side_b_info: sideB ? {
+              hostname: sideB.hostname || '',
+              location: sideB.location || '',
+              loopback_ip: sideB.loopback_ip || '',
+              access_interface: vpn.side_b?.access_interface || '',
+              interface_details: vpn.side_b?.access_interface_details
+            } : undefined,
+            // Informações de destino para casos onde o equipamento não está na base
+            destination_info: destinationInfo
           });
         }
       });
       
-      console.log('🎯 MPLS SERVICE - Total convertido do relatório:', convertedResults.length);
+      console.log('🎯 MPLS SERVICE - Total convertido do relatório (consolidado):', convertedResults.length);
+      console.log('📊 MPLS SERVICE - VPNs únicas processadas:', processedVpns.size);
       return convertedResults;
       
     } catch (error) {
@@ -710,6 +765,46 @@ class MplsService {
     }
     
     return 'Text Search';
+  }
+
+  private extractInterfaceCapacity(interfaceName: string): string {
+    if (!interfaceName) return 'N/A';
+
+    // Extrair capacidade de diferentes tipos de interface MPLS
+    const interfacePatterns = [
+      { pattern: /hundred-gigabit/i, capacity: '100G' },
+      { pattern: /twenty-five-g/i, capacity: '25G' },
+      { pattern: /ten-gigabit/i, capacity: '10G' },
+      { pattern: /gigabit/i, capacity: '1G' },
+      { pattern: /fast-ethernet/i, capacity: '100M' },
+      { pattern: /ethernet/i, capacity: '10M' }
+    ];
+
+    // Verificar padrões conhecidos primeiro
+    for (const { pattern, capacity } of interfacePatterns) {
+      if (pattern.test(interfaceName)) {
+        return capacity;
+      }
+    }
+
+    // Tentar extrair capacidade numérica se disponível
+    const numericMatch = interfaceName.match(/(\d+)(?:G|M|K)?$/i);
+    if (numericMatch && numericMatch[1]) {
+      const capacity = parseInt(numericMatch[1]);
+      if (capacity >= 100) {
+        return `${capacity}G`;
+      } else if (capacity >= 1) {
+        return `${capacity}G`;
+      }
+    }
+
+    // Fallback para interfaces comuns
+    if (interfaceName.includes('100G') || interfaceName.includes('100g')) return '100G';
+    if (interfaceName.includes('25G') || interfaceName.includes('25g')) return '25G';
+    if (interfaceName.includes('10G') || interfaceName.includes('10g')) return '10G';
+    if (interfaceName.includes('1G') || interfaceName.includes('1g')) return '1G';
+
+    return 'N/A';
   }
 }
 
