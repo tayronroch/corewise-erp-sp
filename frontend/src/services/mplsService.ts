@@ -396,6 +396,8 @@ class MplsService {
       
       // 3.5. Buscar detalhes das LAGs e seus membros via /customer-interface-report/
       const lagMembersMap: any = {};
+      const interfaceDescriptionsMap: any = {}; // Novo mapa para correlacionar interfaces com clientes
+      
       try {
         const interfaceReport = await this.request<any>('/customer-interface-report/', {
           params: { equipment: equipmentName }
@@ -404,29 +406,34 @@ class MplsService {
         if (interfaceReport && interfaceReport.results) {
           console.log('🔍 MPLS SERVICE - Processando interfaces para LAGs:', interfaceReport.results.length);
           
-          // Mapear interfaces físicas para LAGs
+          // Primeiro, mapear todas as interfaces físicas e suas descrições
           interfaceReport.results.forEach((interfaceInfo: any) => {
             const interfaceName = interfaceInfo.interface?.name;
             const description = interfaceInfo.interface?.description || '';
             
+            // Armazenar descrição da interface para uso posterior
+            interfaceDescriptionsMap[interfaceName] = description;
+            
             console.log(`🔍 Interface: ${interfaceName} - Descrição: ${description}`);
             
-            // Detectar se a interface pertence a uma LAG pela descrição
+            // Detectar se a interface pertence a uma LAG pela descrição (suporta qualquer número de LAG)
             const lagMatch = description.match(/LAG(\d+)/i);
             if (lagMatch) {
               const lagId = parseInt(lagMatch[1]);
               const lagName = `lag-${lagId}`;
               
-              console.log(`🔗 LAG detectada: ${lagName} para interface ${interfaceName}`);
+              console.log(`🔗 LAG detectada: ${lagName} (LAG${lagId}) para interface ${interfaceName}`);
               
               if (!lagMembersMap[lagName]) {
                 lagMembersMap[lagName] = {
                   name: lagName,
+                  lagNumber: lagId,
                   members: [],
                   totalSpeed: 0,
-                  description: description.replace(/-P\d+-LAG\d+/i, '') // Remover sufixo específico
+                  description: description.replace(/-P\d+-LAG\d+/i, '').trim(), // Remover sufixo específico
+                  clientName: null // Será extraído das interfaces membros
                 };
-                console.log(`📝 Nova LAG criada: ${lagName}`);
+                console.log(`📝 Nova LAG criada: ${lagName} (número ${lagId})`);
               }
               
               // Adicionar membro à LAG
@@ -441,13 +448,27 @@ class MplsService {
               const speedValue = parseInt(speed.replace('G', '')) || 10;
               lagMembersMap[lagName].totalSpeed += speedValue;
               
+              // Extrair nome do cliente da descrição da interface física
+              if (!lagMembersMap[lagName].clientName) {
+                console.log(`🔍 Tentando extrair cliente da descrição: "${description}"`);
+                const clientMatch = description.match(/CUSTOMER-([A-Z][A-Z0-9]+)/i);
+                console.log(`🔍 Match encontrado:`, clientMatch);
+                
+                if (clientMatch) {
+                  lagMembersMap[lagName].clientName = clientMatch[1];
+                  console.log(`👤 Cliente identificado para ${lagName}: ${lagMembersMap[lagName].clientName}`);
+                } else {
+                  console.log(`❌ Nenhum cliente encontrado na descrição: "${description}"`);
+                }
+              }
+              
               console.log(`➕ Membro adicionado à ${lagName}: ${interfaceName} (${speed}) - Total: ${lagMembersMap[lagName].totalSpeed}G`);
             } else {
               console.log(`❌ Não é LAG: ${interfaceName} - ${description}`);
             }
           });
           
-          // Atualizar descrições das LAGs
+          // Atualizar descrições das LAGs e garantir que o cliente foi identificado
           Object.keys(lagMembersMap).forEach(lagName => {
             const lag = lagMembersMap[lagName];
             if (lag.members.length > 0) {
@@ -460,13 +481,21 @@ class MplsService {
                 description: lag.description,
                 finalSpeed: lag.finalSpeed,
                 members: lag.members.length,
-                totalSpeed: lag.totalSpeed
+                totalSpeed: lag.totalSpeed,
+                clientName: lag.clientName
               });
             }
           });
         }
         
         console.log('🔗 MPLS SERVICE - LAGs e seus membros mapeados:', lagMembersMap);
+        console.log('📋 MPLS SERVICE - Descrições das interfaces:', interfaceDescriptionsMap);
+        
+        // DEBUG: Log específico dos clientes identificados nas LAGs
+        Object.keys(lagMembersMap).forEach(lagName => {
+          const lag = lagMembersMap[lagName];
+          console.log(`🏷️ LAG ${lagName} - Cliente: ${lag.clientName || 'NÃO IDENTIFICADO'}`);
+        });
       } catch (error) {
         console.log('⚠️ MPLS SERVICE - Erro ao buscar membros das LAGs:', error);
       }
@@ -625,6 +654,8 @@ class MplsService {
                   const lagId = parseInt(lagMatch[1]);
                   const expectedLagName = `lag-${lagId}`;
                   
+                  console.log(`🔍 Comparando LAG remota: esperado=${remoteInterface}, encontrado=${expectedLagName}`);
+                  
                   if (expectedLagName === remoteInterface) {
                     remoteLagMembers.push({
                       name: interfaceInfo.interface?.name,
@@ -639,6 +670,8 @@ class MplsService {
                     if (!remoteLagDescription) {
                       remoteLagDescription = description.replace(/-P\d+-LAG\d+/i, '').trim();
                     }
+                    
+                    console.log(`✅ Membro LAG remota adicionado: ${interfaceInfo.interface?.name} para ${expectedLagName}`);
                   }
                 }
               });
@@ -691,53 +724,49 @@ class MplsService {
           console.log(`🚀 Usando velocidade calculada da LAG remota: ${neighborInterfaceCapacity}`);
         }
         
-        console.log(`📊 Capacidades finais - Local: ${interfaceCapacity}, Remota: ${neighborInterfaceCapacity}`);
-        
-        // DEBUG: Log dos clientes encontrados para esta VPN
-        console.log(`🔍 DEBUG VPN ${vpn.vpn_id}:`, {
-          vpn_customers: vpn.customers,
-          vpn_description: vpn.description,
-          vpn_complete_object: vpn
-        });
         
         // Tentar extrair cliente da descrição se não temos no campo customers
         let finalCustomers = vpn.customers || [];
         
-        // DEBUG: Log específico para VPNs 1340 e 1341
-        if (vpn.vpn_id === '1340' || vpn.vpn_id === '1341') {
-          console.log(`🔍 DEBUG VPN ${vpn.vpn_id}:`);
-          console.log(`  - customers original:`, vpn.customers);
-          console.log(`  - description:`, vpn.description);
-          console.log(`  - access_interface:`, vpn.access_interface);
-          console.log(`  - finalCustomers inicial:`, finalCustomers);
-          
-          // Debug do equipamento
-          if (response.equipment && response.equipment.hostname) {
-            console.log(`  - equipamento:`, response.equipment.hostname);
-            const equipmentName = response.equipment.hostname;
-            const equipmentData = equipmentInterfaces[equipmentName];
-            console.log(`  - equipmentData existe:`, !!equipmentData);
-            if (equipmentData) {
-              console.log(`  - número de interfaces no equipamento:`, Object.keys(equipmentData).length);
-              // Mostrar algumas interfaces para debug
-              const someInterfaces = Object.values(equipmentData).slice(0, 3);
-              console.log(`  - algumas interfaces:`, someInterfaces.map((i: any) => ({ name: i.name, description: i.description })));
-            }
-          }
+        // DEBUG para VPNs específicas
+        if (vpn.vpn_id === 1340 || vpn.vpn_id === 1341 || vpn.vpn_id === 2790) {
+          console.log(`🔍 DEBUG VPN ${vpn.vpn_id} - INICIAL:`, {
+            vpn_customers_original: vpn.customers,
+            finalCustomers_inicial: finalCustomers,
+            finalCustomers_length: finalCustomers.length,
+            access_interface: vpn.access_interface,
+            interface_name: vpn.interface?.name,
+            vpn_object: vpn
+          });
         }
         
         if (!finalCustomers || finalCustomers.length === 0) {
-          // Tentar extrair da descrição da VPN
-          const description = vpn.description || '';
-          
-          // Também tentar extrair das descrições das interfaces (LAG e física)
-          const allDescriptions = [description];
-          
-          if (vpn.vpn_id === '1340' || vpn.vpn_id === '1341') {
-            console.log(`  - descrições iniciais:`, allDescriptions);
+          // NOVA ABORDAGEM: Se for LAG, usar diretamente o clientName do lagMembersMap
+          const interfaceName = vpn.access_interface || vpn.interface?.name;
+          if (interfaceName && interfaceName.startsWith('lag-')) {
+            console.log(`🔍 DEBUG VPN ${vpn.vpn_id} - Tentando LAG ${interfaceName}`);
+            console.log(`🔍 DEBUG VPN ${vpn.vpn_id} - lagMembersMap disponível:`, Object.keys(lagMembersMap));
+            
+            const lagInfo = lagMembersMap[interfaceName];
+            console.log(`🔍 DEBUG VPN ${vpn.vpn_id} - lagInfo encontrada:`, lagInfo);
+            
+            if (lagInfo && lagInfo.clientName) {
+              finalCustomers = [lagInfo.clientName];
+              console.log(`🎯 Cliente encontrado via lagMembersMap para VPN ${vpn.vpn_id}: ${lagInfo.clientName}`);
+            } else {
+              console.log(`❌ DEBUG VPN ${vpn.vpn_id} - Não foi possível encontrar cliente na LAG ${interfaceName}`);
+            }
           }
           
-          // Adicionar descrições das interfaces do equipamento local
+          // Se ainda não encontrou, usar método tradicional
+          if (finalCustomers.length === 0) {
+            // Tentar extrair da descrição da VPN
+            const description = vpn.description || '';
+            
+            // Também tentar extrair das descrições das interfaces (LAG e física)
+            const allDescriptions = [description];
+            
+            // Adicionar descrições das interfaces do equipamento local
           if (response.equipment && response.equipment.hostname) {
             const equipmentName = response.equipment.hostname;
             const equipmentData = equipmentInterfaces[equipmentName];
@@ -780,30 +809,76 @@ class MplsService {
                 }
               }
               
-              // Buscar por LAG ID na descrição das interfaces físicas (sempre, não só se não encontrou)
+              // NOVA ABORDAGEM: Se for LAG, buscar nas interfaces físicas membros do equipamento
               if (vpn.access_interface && vpn.access_interface.startsWith('lag-')) {
                 const lagId = vpn.access_interface; // Ex: "lag-14"
-                const lagNumber = lagId.replace('lag-', ''); // Ex: "14"
-                const lagPattern = `LAG${lagNumber}`; // Ex: "LAG14"
                 
-                const physicalInterfacesWithLag = Object.values(equipmentData).filter((intfData: any) => 
-                  intfData.description && (
-                    intfData.description.includes(lagPattern) ||
-                    intfData.description.includes(`-${lagPattern}`) ||
-                    intfData.description.includes(`P1-${lagPattern}`) ||
-                    intfData.description.includes(`P2-${lagPattern}`)
-                  )
-                );
-                
-                if (vpn.vpn_id === '1340' || vpn.vpn_id === '1341') {
-                  console.log(`  - buscando interfaces físicas com padrão ${lagPattern}:`, physicalInterfacesWithLag.length);
-                }
-                
-                for (const physIntf of physicalInterfacesWithLag) {
-                  if ((physIntf as any).description) {
-                    allDescriptions.push((physIntf as any).description);
-                    if (vpn.vpn_id === '1340' || vpn.vpn_id === '1341') {
-                      console.log(`  - descrição da interface física com ${lagPattern}:`, (physIntf as any).description);
+                // 1. Usar o lagMembersMap para pegar as interfaces membros
+                const lagInfo = lagMembersMap[lagId];
+                if (lagInfo && lagInfo.members && lagInfo.members.length > 0) {
+                  // 2. Para cada interface membro, buscar no equipmentData a descrição da interface física
+                  for (const member of lagInfo.members) {
+                    const memberInterfaceName = member.name; // Ex: "ten-gigabit-ethernet-1/1/10"
+                    
+                    // 3. Buscar essa interface física no equipmentData do mesmo equipamento
+                    if (equipmentData) {
+                      // Busca direta por nome da interface
+                      const physicalInterface = Object.values(equipmentData).find((intfData: any) => 
+                        intfData.name === memberInterfaceName
+                      );
+                      
+                      if (physicalInterface && (physicalInterface as any).description) {
+                        allDescriptions.push((physicalInterface as any).description);
+                      } else {
+                        // Busca alternativa: buscar por padrão similar no nome
+                        const alternativeInterface = Object.values(equipmentData).find((intfData: any) => 
+                          intfData.name && intfData.name.includes(memberInterfaceName.replace('ten-gigabit-ethernet-', ''))
+                        );
+                        
+                        if (alternativeInterface && (alternativeInterface as any).description) {
+                          allDescriptions.push((alternativeInterface as any).description);
+                        }
+                      }
+                    }
+                    
+                    // 4. Buscar usando dados do customer-interface-report específico para essa interface
+                    try {
+                      // Esta é uma busca mais específica para pegar a descrição real da interface física
+                      // (Esta busca já foi feita anteriormente no código, mas vamos aproveitar)
+                    } catch (error) {
+                      // Silencioso - apenas fallback
+                    }
+                    
+                    // 5. Fallback: usar descrição do lagMembersMap se não encontrou nas outras fontes
+                    if (member.description) {
+                      allDescriptions.push(member.description);
+                    }
+                  }
+                } else {
+                  // Fallback: usar o método antigo se não encontrou no lagMembersMap
+                  const lagId = vpn.access_interface; // Ex: "lag-14"
+                  const lagNumber = lagId.replace('lag-', ''); // Ex: "14"
+                  const lagPattern = `LAG${lagNumber}`; // Ex: "LAG14"
+                  
+                  const physicalInterfacesWithLag = Object.values(equipmentData).filter((intfData: any) => 
+                    intfData.description && (
+                      intfData.description.includes(lagPattern) ||
+                      intfData.description.includes(`-${lagPattern}`) ||
+                      intfData.description.includes(`P1-${lagPattern}`) ||
+                      intfData.description.includes(`P2-${lagPattern}`)
+                    )
+                  );
+                  
+                  if (vpn.vpn_id === '1340' || vpn.vpn_id === '1341') {
+                    console.log(`  - fallback: buscando interfaces físicas com padrão ${lagPattern}:`, physicalInterfacesWithLag.length);
+                  }
+                  
+                  for (const physIntf of physicalInterfacesWithLag) {
+                    if ((physIntf as any).description) {
+                      allDescriptions.push((physIntf as any).description);
+                      if (vpn.vpn_id === '1340' || vpn.vpn_id === '1341') {
+                        console.log(`  - descrição da interface física com ${lagPattern}:`, (physIntf as any).description);
+                      }
                     }
                   }
                 }
@@ -815,10 +890,14 @@ class MplsService {
           const clientPatterns = [
             // Padrão CUSTOMER-CLIENTE-... das interfaces físicas
             /CUSTOMER-([A-Z][A-Z0-9]*(?:[A-Z]+)*)/gi,
-            // Clientes conhecidos diretos
-            /(MEGALINK|VILARNET|NETPAC|TECNET|HIITECH|JRNET|TECHFIBRA|CONNECT)/gi, 
-            // Palavras em maiúsculas genéricas
-            /([A-Z][A-Z]+(?:\s+[A-Z]+)*)/g
+            // Clientes conhecidos diretos (incluindo novos)
+            /(MEGALINK|VILARNET|NETPAC|TECNET|HIITECH|JRNET|TECHFIBRA|CONNECT|CLIENTE)/gi, 
+            // Padrão específico para interfaces LAG: NOME-P1-LAG[qualquer_numero] ou NOME-P2-LAG[qualquer_numero]
+            /^([A-Z][A-Z0-9]+)-P[12]-LAG\d+/gi,
+            // Padrão alternativo para LAGs: NOME-LAG[qualquer_numero] (sem P1/P2)
+            /^([A-Z][A-Z0-9]+)-LAG\d+/gi,
+            // Palavras em maiúsculas genéricas (mais restritivo)
+            /^([A-Z]{3,}(?:\s+[A-Z]{3,})*)/g
           ];
           
           // Testar todos os padrões em todas as descrições
@@ -831,9 +910,6 @@ class MplsService {
               if (i === 0) {
                 // Padrão CUSTOMER- com grupo de captura
                 const matches = desc.match(pattern);
-                if (vpn.vpn_id === '1340' || vpn.vpn_id === '1341') {
-                  console.log(`  - testando padrão CUSTOMER- ${pattern} em "${desc}":`, matches);
-                }
                 if (matches && matches.length > 0) {
                   // Para o padrão CUSTOMER-, pegar apenas os grupos capturados (sem o "CUSTOMER-")
                   const regex = /CUSTOMER-([A-Z][A-Z0-9]*(?:[A-Z]+)*)/gi;
@@ -844,19 +920,46 @@ class MplsService {
                   }
                   if (clients.length > 0) {
                     finalCustomers = [...new Set(clients)]; // Remove duplicatas
-                    console.log(`🎯 Cliente extraído do padrão CUSTOMER- "${desc}":`, finalCustomers);
+                    break;
+                  }
+                }
+              } else if (i === 2) {
+                // Padrão específico LAG: NOME-P1-LAG[numero] ou NOME-P2-LAG[numero] com grupo de captura
+                const matches = desc.match(pattern);
+                if (matches && matches.length > 0) {
+                  // Para o padrão LAG com P1/P2, pegar apenas o grupo capturado (o nome do cliente)
+                  const regex = /^([A-Z][A-Z0-9]+)-P[12]-LAG\d+/gi;
+                  const clients = [];
+                  let match;
+                  while ((match = regex.exec(desc)) !== null) {
+                    clients.push(match[1]); // Pegar apenas o grupo capturado
+                  }
+                  if (clients.length > 0) {
+                    finalCustomers = [...new Set(clients)]; // Remove duplicatas
+                    break;
+                  }
+                }
+              } else if (i === 3) {
+                // Padrão alternativo LAG: NOME-LAG[numero] (sem P1/P2) com grupo de captura
+                const matches = desc.match(pattern);
+                if (matches && matches.length > 0) {
+                  // Para o padrão LAG direto, pegar apenas o grupo capturado (o nome do cliente)
+                  const regex = /^([A-Z][A-Z0-9]+)-LAG\d+/gi;
+                  const clients = [];
+                  let match;
+                  while ((match = regex.exec(desc)) !== null) {
+                    clients.push(match[1]); // Pegar apenas o grupo capturado
+                  }
+                  if (clients.length > 0) {
+                    finalCustomers = [...new Set(clients)]; // Remove duplicatas
                     break;
                   }
                 }
               } else {
                 // Outros padrões normais
                 const matches = desc.match(pattern);
-                if (vpn.vpn_id === '1340' || vpn.vpn_id === '1341') {
-                  console.log(`  - testando padrão ${pattern} em "${desc}":`, matches);
-                }
                 if (matches && matches.length > 0) {
                   finalCustomers = [...new Set(matches)]; // Remove duplicatas
-                  console.log(`🎯 Cliente extraído da descrição "${desc}":`, finalCustomers);
                   break;
                 }
               }
@@ -872,22 +975,17 @@ class MplsService {
               const match = description.match(/^([A-Z]+(?:\s+[A-Z]+)*)/);
               if (match) {
                 finalCustomers = [match[1].trim()];
-                console.log(`🎯 Cliente extraído do início da descrição:`, finalCustomers);
               }
             }
           }
           
-          // Último fallback: usar "DESCONHECIDO"
-          if (finalCustomers.length === 0) {
-            finalCustomers = ['CLIENTE_DESCONHECIDO'];
-            console.log(`⚠️ Nenhum cliente encontrado para VPN ${vpn.vpn_id}, usando fallback`);
+            // Último fallback: usar "DESCONHECIDO"
+            if (finalCustomers.length === 0) {
+              finalCustomers = ['CLIENTE_DESCONHECIDO'];
+            }
           }
         }
         
-        // DEBUG FINAL: Log específico para VPNs 1340 e 1341
-        if (vpn.vpn_id === '1340' || vpn.vpn_id === '1341') {
-          console.log(`🔍 DEBUG VPN ${vpn.vpn_id} FINAL: clientes =`, finalCustomers);
-        }
         
         return {
           id: index,
