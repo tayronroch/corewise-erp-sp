@@ -414,7 +414,6 @@ class MplsService {
             // Armazenar descrição da interface para uso posterior
             interfaceDescriptionsMap[interfaceName] = description;
             
-            console.log(`🔍 Interface: ${interfaceName} - Descrição: ${description}`);
             
             // Detectar se a interface pertence a uma LAG pela descrição (suporta qualquer número de LAG)
             const lagMatch = description.match(/LAG(\d+)/i);
@@ -422,7 +421,6 @@ class MplsService {
               const lagId = parseInt(lagMatch[1]);
               const lagName = `lag-${lagId}`;
               
-              console.log(`🔗 LAG detectada: ${lagName} (LAG${lagId}) para interface ${interfaceName}`);
               
               if (!lagMembersMap[lagName]) {
                 lagMembersMap[lagName] = {
@@ -433,7 +431,6 @@ class MplsService {
                   description: description.replace(/-P\d+-LAG\d+/i, '').trim(), // Remover sufixo específico
                   clientName: null // Será extraído das interfaces membros
                 };
-                console.log(`📝 Nova LAG criada: ${lagName} (número ${lagId})`);
               }
               
               // Adicionar membro à LAG
@@ -448,23 +445,15 @@ class MplsService {
               const speedValue = parseInt(speed.replace('G', '')) || 10;
               lagMembersMap[lagName].totalSpeed += speedValue;
               
-              // Extrair nome do cliente da descrição da interface física
+              // Extrair nome do cliente da descrição da interface física (API)
               if (!lagMembersMap[lagName].clientName) {
-                console.log(`🔍 Tentando extrair cliente da descrição: "${description}"`);
-                const clientMatch = description.match(/CUSTOMER-([A-Z][A-Z0-9]+)/i);
-                console.log(`🔍 Match encontrado:`, clientMatch);
+                const clientName = this.extractClientFromDescription(description);
                 
-                if (clientMatch) {
-                  lagMembersMap[lagName].clientName = clientMatch[1];
-                  console.log(`👤 Cliente identificado para ${lagName}: ${lagMembersMap[lagName].clientName}`);
-                } else {
-                  console.log(`❌ Nenhum cliente encontrado na descrição: "${description}"`);
+                if (clientName) {
+                  lagMembersMap[lagName].clientName = clientName;
                 }
               }
               
-              console.log(`➕ Membro adicionado à ${lagName}: ${interfaceName} (${speed}) - Total: ${lagMembersMap[lagName].totalSpeed}G`);
-            } else {
-              console.log(`❌ Não é LAG: ${interfaceName} - ${description}`);
             }
           });
           
@@ -488,14 +477,116 @@ class MplsService {
           });
         }
         
-        console.log('🔗 MPLS SERVICE - LAGs e seus membros mapeados:', lagMembersMap);
-        console.log('📋 MPLS SERVICE - Descrições das interfaces:', interfaceDescriptionsMap);
-        
-        // DEBUG: Log específico dos clientes identificados nas LAGs
-        Object.keys(lagMembersMap).forEach(lagName => {
+        // 3.6. Buscar descrições das interfaces físicas no banco de dados local
+        for (const lagName of Object.keys(lagMembersMap)) {
           const lag = lagMembersMap[lagName];
-          console.log(`🏷️ LAG ${lagName} - Cliente: ${lag.clientName || 'NÃO IDENTIFICADO'}`);
-        });
+          if (lag.members && lag.members.length > 0) {
+            for (const member of lag.members) {
+              try {
+                // Buscar descrição da interface física no banco de dados local via search
+                const searchQuery = `${equipmentName} ${member.name}`;
+                const interfaceSearchResult = await this.request<any>('/search/', {
+                  params: { 
+                    q: searchQuery,
+                    limit: 1
+                  }
+                });
+                
+                if (interfaceSearchResult && interfaceSearchResult.results && interfaceSearchResult.results.length > 0) {
+                  // Procurar resultado que contenha a interface específica
+                  const matchingResult = interfaceSearchResult.results.find((result: any) => 
+                    result.raw_config && result.raw_config.includes(member.name) && 
+                    result.equipment_name === equipmentName
+                  );
+                  
+                  if (matchingResult) {
+                    // Extrair descrição da interface do raw_config
+                    const configLines = matchingResult.raw_config.split('\n');
+                    let interfaceDescription = '';
+                    
+                    for (let i = 0; i < configLines.length; i++) {
+                      const line = configLines[i].trim();
+                      if (line === `interface ${member.name}` || line.startsWith(`interface ${member.name} `)) {
+                        // Procurar pela linha description nas próximas linhas
+                        for (let j = i + 1; j < configLines.length && j < i + 10; j++) {
+                          const descLine = configLines[j].trim();
+                          if (descLine.startsWith('description ')) {
+                            interfaceDescription = descLine.replace('description ', '').trim();
+                            break;
+                          }
+                          if (descLine.startsWith('interface ')) break; // Próxima interface
+                        }
+                        break;
+                      }
+                    }
+                    
+                    if (interfaceDescription) {
+                      // Atualizar descrição do membro com dados do banco
+                      member.dbDescription = interfaceDescription;
+                      
+                      // Tentar extrair cliente da descrição do banco de dados
+                      if (!lag.clientName) {
+                        const clientName = this.extractClientFromDescription(interfaceDescription);
+                        if (clientName) {
+                          lag.clientName = clientName;
+                          console.log(`🎯 Cliente identificado via BD para ${lagName}: ${clientName} (interface: ${member.name})`);
+                        }
+                      }
+                    }
+                  }
+                }
+              } catch (error) {
+                // Fallback: tentar buscar via reports/equipment se search falhar
+                try {
+                  const equipmentReport = await this.request<any>('/reports/equipment/', {
+                    params: { equipment: equipmentName }
+                  });
+                  
+                  if (equipmentReport && equipmentReport.results) {
+                    for (const result of equipmentReport.results) {
+                      if (result.raw_config && result.raw_config.includes(`interface ${member.name}`)) {
+                        const configLines = result.raw_config.split('\n');
+                        let interfaceDescription = '';
+                        
+                        for (let i = 0; i < configLines.length; i++) {
+                          const line = configLines[i].trim();
+                          if (line === `interface ${member.name}` || line.startsWith(`interface ${member.name} `)) {
+                            // Procurar pela linha description
+                            for (let j = i + 1; j < configLines.length && j < i + 10; j++) {
+                              const descLine = configLines[j].trim();
+                              if (descLine.startsWith('description ')) {
+                                interfaceDescription = descLine.replace('description ', '').trim();
+                                break;
+                              }
+                              if (descLine.startsWith('interface ')) break;
+                            }
+                            break;
+                          }
+                        }
+                        
+                        if (interfaceDescription) {
+                          member.dbDescription = interfaceDescription;
+                          
+                          if (!lag.clientName) {
+                            const clientName = this.extractClientFromDescription(interfaceDescription);
+                            if (clientName) {
+                              lag.clientName = clientName;
+                              console.log(`🎯 Cliente identificado via BD (fallback) para ${lagName}: ${clientName}`);
+                            }
+                          }
+                          break;
+                        }
+                      }
+                    }
+                  }
+                } catch (fallbackError) {
+                  console.log(`⚠️ Erro no fallback para interface ${member.name}:`, fallbackError);
+                }
+              }
+            }
+          }
+        }
+        
       } catch (error) {
         console.log('⚠️ MPLS SERVICE - Erro ao buscar membros das LAGs:', error);
       }
@@ -744,17 +835,10 @@ class MplsService {
           // NOVA ABORDAGEM: Se for LAG, usar diretamente o clientName do lagMembersMap
           const interfaceName = vpn.access_interface || vpn.interface?.name;
           if (interfaceName && interfaceName.startsWith('lag-')) {
-            console.log(`🔍 DEBUG VPN ${vpn.vpn_id} - Tentando LAG ${interfaceName}`);
-            console.log(`🔍 DEBUG VPN ${vpn.vpn_id} - lagMembersMap disponível:`, Object.keys(lagMembersMap));
-            
             const lagInfo = lagMembersMap[interfaceName];
-            console.log(`🔍 DEBUG VPN ${vpn.vpn_id} - lagInfo encontrada:`, lagInfo);
             
             if (lagInfo && lagInfo.clientName) {
               finalCustomers = [lagInfo.clientName];
-              console.log(`🎯 Cliente encontrado via lagMembersMap para VPN ${vpn.vpn_id}: ${lagInfo.clientName}`);
-            } else {
-              console.log(`❌ DEBUG VPN ${vpn.vpn_id} - Não foi possível encontrar cliente na LAG ${interfaceName}`);
             }
           }
           
@@ -886,86 +970,15 @@ class MplsService {
             }
           }
           
-          // Padrões de cliente para buscar em todas as descrições
-          const clientPatterns = [
-            // Padrão CUSTOMER-CLIENTE-... das interfaces físicas
-            /CUSTOMER-([A-Z][A-Z0-9]*(?:[A-Z]+)*)/gi,
-            // Clientes conhecidos diretos (incluindo novos)
-            /(MEGALINK|VILARNET|NETPAC|TECNET|HIITECH|JRNET|TECHFIBRA|CONNECT|CLIENTE)/gi, 
-            // Padrão específico para interfaces LAG: NOME-P1-LAG[qualquer_numero] ou NOME-P2-LAG[qualquer_numero]
-            /^([A-Z][A-Z0-9]+)-P[12]-LAG\d+/gi,
-            // Padrão alternativo para LAGs: NOME-LAG[qualquer_numero] (sem P1/P2)
-            /^([A-Z][A-Z0-9]+)-LAG\d+/gi,
-            // Palavras em maiúsculas genéricas (mais restritivo)
-            /^([A-Z]{3,}(?:\s+[A-Z]{3,})*)/g
-          ];
-          
-          // Testar todos os padrões em todas as descrições
+          // NOVA ABORDAGEM: Usar método inteligente de extração
           for (const desc of allDescriptions) {
             if (!desc) continue;
             
-            for (let i = 0; i < clientPatterns.length; i++) {
-              const pattern = clientPatterns[i];
-              
-              if (i === 0) {
-                // Padrão CUSTOMER- com grupo de captura
-                const matches = desc.match(pattern);
-                if (matches && matches.length > 0) {
-                  // Para o padrão CUSTOMER-, pegar apenas os grupos capturados (sem o "CUSTOMER-")
-                  const regex = /CUSTOMER-([A-Z][A-Z0-9]*(?:[A-Z]+)*)/gi;
-                  const clients = [];
-                  let match;
-                  while ((match = regex.exec(desc)) !== null) {
-                    clients.push(match[1]); // Pegar apenas o grupo capturado
-                  }
-                  if (clients.length > 0) {
-                    finalCustomers = [...new Set(clients)]; // Remove duplicatas
-                    break;
-                  }
-                }
-              } else if (i === 2) {
-                // Padrão específico LAG: NOME-P1-LAG[numero] ou NOME-P2-LAG[numero] com grupo de captura
-                const matches = desc.match(pattern);
-                if (matches && matches.length > 0) {
-                  // Para o padrão LAG com P1/P2, pegar apenas o grupo capturado (o nome do cliente)
-                  const regex = /^([A-Z][A-Z0-9]+)-P[12]-LAG\d+/gi;
-                  const clients = [];
-                  let match;
-                  while ((match = regex.exec(desc)) !== null) {
-                    clients.push(match[1]); // Pegar apenas o grupo capturado
-                  }
-                  if (clients.length > 0) {
-                    finalCustomers = [...new Set(clients)]; // Remove duplicatas
-                    break;
-                  }
-                }
-              } else if (i === 3) {
-                // Padrão alternativo LAG: NOME-LAG[numero] (sem P1/P2) com grupo de captura
-                const matches = desc.match(pattern);
-                if (matches && matches.length > 0) {
-                  // Para o padrão LAG direto, pegar apenas o grupo capturado (o nome do cliente)
-                  const regex = /^([A-Z][A-Z0-9]+)-LAG\d+/gi;
-                  const clients = [];
-                  let match;
-                  while ((match = regex.exec(desc)) !== null) {
-                    clients.push(match[1]); // Pegar apenas o grupo capturado
-                  }
-                  if (clients.length > 0) {
-                    finalCustomers = [...new Set(clients)]; // Remove duplicatas
-                    break;
-                  }
-                }
-              } else {
-                // Outros padrões normais
-                const matches = desc.match(pattern);
-                if (matches && matches.length > 0) {
-                  finalCustomers = [...new Set(matches)]; // Remove duplicatas
-                  break;
-                }
-              }
+            const clientName = this.extractClientFromDescription(desc);
+            if (clientName) {
+              finalCustomers = [clientName];
+              break;
             }
-            
-            if (finalCustomers.length > 0) break; // Se encontrou, parar de buscar
           }
           
           // Se ainda não encontrou, usar um fallback baseado no padrão da descrição
@@ -1672,6 +1685,64 @@ class MplsService {
     if (interfaceName.includes('1G') || interfaceName.includes('1g')) return '1G';
 
     return 'N/A';
+  }
+
+  // Método auxiliar para extrair nome do cliente de descrições complexas
+  private extractClientFromDescription(description: string): string | null {
+    if (!description) return null;
+
+    // Padrões de palavras genéricas que devem ser ignoradas
+    const genericWords = [
+      'ISP', 'BORDA', 'L2L', 'P1', 'P2', 'LAG', 'VL', 'VLAN', 
+      'TRUNK', 'UPLINK', 'BACKUP', 'PRIMARY', 'SECONDARY',
+      'FASE', 'ATIVACAO', 'TESTE', 'TEMP', 'TMP'
+    ];
+
+    // 1. Primeiro, tentar padrão CUSTOMER-
+    const customerMatch = description.match(/CUSTOMER-(.+)/i);
+    if (customerMatch) {
+      const afterCustomer = customerMatch[1];
+      
+      // 2. Quebrar por hífens e analisar cada parte
+      const parts = afterCustomer.split('-').filter(part => part.length > 0);
+      
+      // 3. Procurar a primeira parte que não seja uma palavra genérica
+      for (const part of parts) {
+        const cleanPart = part.trim().toUpperCase();
+        
+        // Pular palavras genéricas
+        if (genericWords.includes(cleanPart)) {
+          continue;
+        }
+        
+        // Pular partes que são claramente técnicas (números, VLANs, etc.)
+        if (/^(VL|VLAN|LAG|P)\d+$/i.test(cleanPart)) {
+          continue;
+        }
+        
+        // Pular partes muito curtas (provavelmente siglas técnicas)
+        if (cleanPart.length < 3) {
+          continue;
+        }
+        
+        // Esta deve ser o nome do cliente
+        return cleanPart;
+      }
+    }
+
+    // 4. Fallback: tentar padrões conhecidos de clientes
+    const knownPatterns = [
+      /(MEGALINK|VILARNET|NETPAC|TECNET|HIITECH|JRNET|TECHFIBRA|CONNECT|DIGITALNET|ACCORD|HENRIQUE)/gi
+    ];
+
+    for (const pattern of knownPatterns) {
+      const match = description.match(pattern);
+      if (match) {
+        return match[0].toUpperCase();
+      }
+    }
+
+    return null;
   }
 
   // Método auxiliar para calcular velocidade de LAGs
