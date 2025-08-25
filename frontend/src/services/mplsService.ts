@@ -191,6 +191,13 @@ class MplsService {
         return this.searchByEquipment(equipmentFilter);
       }
 
+      // Detectar se a query parece ser nome de equipamento (padrão: ESTADO-CIDADE-ALGO-PE01)
+      const equipmentPattern = /^[A-Z]{2}-[A-Z]+-[A-Z]+-PE\d+$/i;
+      if (equipmentPattern.test(query)) {
+        console.log('🔍 MPLS SERVICE - Query detectada como equipamento, usando searchByEquipment:', query);
+        return this.searchByEquipment(query);
+      }
+
       // Usar o endpoint de relatório de cliente que retorna todos os resultados
       // O endpoint /search/ tem bug de paginação (sempre retorna os mesmos 10 resultados)
       console.log('🔄 MPLS SERVICE - Usando endpoint de relatório para busca completa...');
@@ -285,7 +292,7 @@ class MplsService {
             encapsulation: vpn.encapsulation || '',
             description: vpn.description || '',
             group_name: '',
-            customers: [query], // Usar o nome do cliente da busca
+            customers: vpn.customers || [query], // Usar clientes reais da VPN ou fallback para query
             highlights: [],
             vpws_groups: vpn.vpn_id ? [{
               id: vpn.vpn_id,
@@ -296,11 +303,11 @@ class MplsService {
                 name: vpn.description || `VPN ${vpn.vpn_id}`
               }]
             }] : [],
-            customer_services: [{
-              id: index,
-              customer_name: query,
+            customer_services: (vpn.customers || [query]).map((customer: string, idx: number) => ({
+              id: index + idx,
+              customer_name: customer,
               service_type: 'VPN'
-            }],
+            })),
             // Adicionar informações dos dois lados para contexto completo
             side_a_info: sideA ? {
               hostname: sideA.hostname || '',
@@ -686,6 +693,51 @@ class MplsService {
         
         console.log(`📊 Capacidades finais - Local: ${interfaceCapacity}, Remota: ${neighborInterfaceCapacity}`);
         
+        // DEBUG: Log dos clientes encontrados para esta VPN
+        console.log(`🔍 DEBUG VPN ${vpn.vpn_id}:`, {
+          vpn_customers: vpn.customers,
+          vpn_description: vpn.description,
+          vpn_complete_object: vpn
+        });
+        
+        // Tentar extrair cliente da descrição se não temos no campo customers
+        let finalCustomers = vpn.customers || [];
+        if (!finalCustomers || finalCustomers.length === 0) {
+          // Tentar extrair da descrição usando padrões conhecidos
+          const description = vpn.description || '';
+          const clientPatterns = [
+            /([A-Z][A-Z]+(?:\s+[A-Z]+)*)/g, // Palavras em maiúsculas
+            /(MEGALINK|VILARNET|NETPAC|TECNET|HIITECH|JRNET)/gi // Clientes conhecidos
+          ];
+          
+          for (const pattern of clientPatterns) {
+            const matches = description.match(pattern);
+            if (matches && matches.length > 0) {
+              finalCustomers = [...new Set(matches)]; // Remove duplicatas
+              console.log(`🎯 Cliente extraído da descrição "${description}":`, finalCustomers);
+              break;
+            }
+          }
+          
+          // Se ainda não encontrou, usar um fallback baseado no padrão da descrição
+          if (finalCustomers.length === 0 && description) {
+            if (description.includes('-P') || description.includes('LAG')) {
+              // Tentar extrair a parte antes do "-P" ou "LAG"
+              const match = description.match(/^([A-Z]+(?:\s+[A-Z]+)*)/);
+              if (match) {
+                finalCustomers = [match[1].trim()];
+                console.log(`🎯 Cliente extraído do início da descrição:`, finalCustomers);
+              }
+            }
+          }
+          
+          // Último fallback: usar "DESCONHECIDO"
+          if (finalCustomers.length === 0) {
+            finalCustomers = ['CLIENTE_DESCONHECIDO'];
+            console.log(`⚠️ Nenhum cliente encontrado para VPN ${vpn.vpn_id}, usando fallback`);
+          }
+        }
+        
         return {
           id: index,
           equipment_name: response.equipment?.hostname || equipmentName,
@@ -700,7 +752,7 @@ class MplsService {
           encapsulation: vpn.encapsulation || '',
           description: vpn.description || '',
           group_name: '',
-          customers: vpn.customers || [],
+          customers: finalCustomers,
           highlights: [],
           vpws_groups: vpn.vpn_id ? [{
             id: vpn.vpn_id,
@@ -711,11 +763,11 @@ class MplsService {
               name: vpn.description || `VPN ${vpn.vpn_id}`
             }]
           }] : [],
-          customer_services: vpn.customers && vpn.customers.length > 0 ? [{
-            id: index,
-            customer_name: vpn.customers[0],
+          customer_services: finalCustomers.map((customer: string, idx: number) => ({
+            id: index + idx,
+            customer_name: customer,
             service_type: 'VPN'
-          }] : [],
+          })),
           destination_info: {
             hostname: vpn.neighbor?.hostname || 'N/A',
             ip: vpn.neighbor?.ip || 'N/A',
@@ -781,7 +833,7 @@ class MplsService {
           opposite_interface: remoteInterface,
           vlan_id: vpn.encapsulation_details?.vlans?.[0]?.vlan || '',
           pw_type: vpn.encapsulation_type || 'vlan',
-          customer_name: vpn.customers?.[0] || '',
+          customer_name: finalCustomers[0] || '',
           interface_description: localInterfaceDetails.description || '',
           interface_found_in_db: localInterfaceDetails.found_in_db || false,
           interface_lag_members: localInterfaceDetails.lag_members || [],
@@ -793,6 +845,13 @@ class MplsService {
       
       console.log('🎯 MPLS SERVICE - Total de VPNs encontradas para o equipamento:', convertedResults.length);
       console.log('📊 MPLS SERVICE - Dados do equipamento:', response.equipment);
+      
+      // DEBUG FINAL: Log de todos os clientes que serão retornados
+      console.log('🚀 MPLS SERVICE - RESULTADO FINAL - Clientes por VPN:');
+      convertedResults.forEach((result, index) => {
+        console.log(`  VPN ${result.vpn_id}: Clientes [${result.customers?.join(', ') || 'N/A'}] - Descrição: "${result.description}"`);
+      });
+      
       return convertedResults;
       
     } catch (error) {

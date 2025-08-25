@@ -222,25 +222,20 @@ const MplsSearchSystem: React.FC = () => {
                 <div key={equipmentKey} className="border border-slate-200 rounded-xl shadow-sm bg-white">
                   <div className="p-4 border-b border-slate-100 flex items-center justify-between">
                     <div>
-                      <h5 className="font-semibold">{first?.customers?.[0] || 'Cliente'}</h5>
-                      <h6 className="text-slate-700">{equipmentKey}</h6>
+                      <h5 className="font-semibold">{equipmentKey}</h5>
                       <div className="text-slate-500 text-sm flex items-center gap-2">
                         <i className="fas fa-map-marker-alt" /> {first?.equipment_location || 'Sem localização'}
                         <span className="mx-2">•</span>
                         <i className="fas fa-network-wired" /> {first?.loopback_ip || 'N/A'}
                       </div>
+                      <div className="text-xs text-slate-400 mt-1">
+                        Clientes: {Array.from(new Set(services.flatMap((s: any) => s.customers || []))).join(', ') || 'N/A'}
+                      </div>
                     </div>
                     <div className="text-sm text-slate-500">{services.length} serviço{services.length !== 1 ? 's' : ''}</div>
                   </div>
 
-                  <div className="p-4">
-                    {/* Cabeçalho */}
-                    <div className="hidden md:grid md:grid-cols-4 text-xs font-medium text-slate-500 border-b border-slate-200 pb-2">
-                      <div className="md:col-span-2">VPN / Destino</div>
-                      <div>Encapsulamento</div>
-                      <div className="text-right">Backup</div>
-                    </div>
-
+                  <div className="p-4 space-y-3">
                     {services.map((result: any, idx: number) => {
                       const enc = result?.encapsulation || '';
                       const encType = enc?.toLowerCase().includes('qinq') ? 'qinq' : 'vlan';
@@ -248,14 +243,27 @@ const MplsSearchSystem: React.FC = () => {
                       const di = result?.destination_info || {};
 
                       return (
-                        <div key={idx} className={`py-3 grid grid-cols-1 md:grid-cols-4 gap-3 items-start text-sm ${idx % 2 === 0 ? 'bg-slate-50' : ''} md:bg-transparent md:hover:bg-slate-50 rounded-md px-2 md:px-0`}>
-                          <div className="md:col-span-2 text-slate-700">
+                        <div key={idx} className="bg-slate-50 border border-slate-200 rounded-lg p-4 hover:shadow-sm transition-shadow">
+                          {/* Cabeçalho da VPN com Cliente */}
+                          <div className="flex items-center justify-between mb-3">
                             <div className="flex items-center gap-2">
-                              <i className="fas fa-sitemap text-slate-400"></i>
-                              <span className="font-medium">VPN {result?.vpn_id || 'N/A'}</span>
+                              <i className="fas fa-sitemap text-slate-500"></i>
+                              <span className="font-semibold text-slate-700">VPN {result?.vpn_id || 'N/A'}</span>
+                              <div className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-md border border-blue-200 font-medium">
+                                {(result?.customers && result.customers.length > 0) ? result.customers.join(', ') : 'Cliente não identificado'}
+                              </div>
                             </div>
+                            <div className="flex items-center gap-2 text-xs text-slate-500">
+                              <i className="fas fa-layer-group"></i>
+                              <Chip tone="blue">{encType.toUpperCase()}</Chip>
+                              <Chip tone="slate">{encValue || '-'}</Chip>
+                            </div>
+                          </div>
 
-                            <div className="mt-1 space-y-1">
+                          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                            {/* Coluna Esquerda - Status e Destino */}
+                            <div className="space-y-2">
+                              {/* Status do equipamento */}
                               {!di.isInDatabase && (
                                 <div className="text-amber-600 bg-amber-50 px-2 py-1 rounded border border-amber-200 text-xs inline-flex items-center gap-1">
                                   <i className="fas fa-exclamation-triangle" /> Equipamento não capturado na base
@@ -266,16 +274,33 @@ const MplsSearchSystem: React.FC = () => {
                                   <i className="fas fa-check-circle" /> Equipamento na base
                                 </div>
                               )}
+                              
+                              {/* Informações de destino */}
                               {di.hostname && di.hostname !== 'N/A' && (
-                                <div className="text-slate-600 text-xs"><span className="font-medium">Destino:</span> {di.hostname}</div>
+                                <div className="text-slate-600 text-sm">
+                                  <span className="font-medium">Destino:</span> {di.hostname}
+                                </div>
                               )}
                               {di.neighborIp && di.neighborIp !== 'N/A' && (
-                                <div className="text-slate-600 text-xs"><span className="font-medium">IP:</span> {di.neighborIp}</div>
+                                <div className="text-slate-600 text-sm">
+                                  <span className="font-medium">IP:</span> {di.neighborIp}
+                                </div>
+                              )}
+                              
+                              {/* Data de backup */}
+                              {result?.backup_date && (
+                                <div className="text-slate-500 text-xs">
+                                  <i className="fas fa-clock mr-1"></i>
+                                  {formatDate(result.backup_date)}
+                                </div>
                               )}
                             </div>
 
-                            {/* LOCAL/REMOTA sem duplicidade */}
-                            <div className="mt-2 space-y-1">
+                            {/* Coluna Direita - Interfaces */}
+                            <div className="space-y-2">
+                              <div className="text-sm font-medium text-slate-600 border-b border-slate-300 pb-1">
+                                Interfaces
+                              </div>
                               <InterfaceBlock label="LOCAL" itf={di.localInterface} fallbackLag={result?.access_interface} />
                               <InterfaceBlock label="REMOTA" itf={di.remoteInterface} />
                               {!di.localInterface && !di.remoteInterface && (
@@ -285,18 +310,6 @@ const MplsSearchSystem: React.FC = () => {
                                 </>
                               )}
                             </div>
-                          </div>
-
-                          <div className="md:col-span-1 flex items-center gap-2 text-slate-700">
-                            <i className="fas fa-layer-group text-slate-400"></i>
-                            <span className="inline-flex items-center gap-2">
-                              <Chip tone="blue">{encType.toUpperCase()}</Chip>
-                              <Chip tone="slate">{encValue || '-'}</Chip>
-                            </span>
-                          </div>
-
-                          <div className="md:col-span-1 text-right text-slate-500">
-                            {result?.backup_date && <span className="text-xs">{formatDate(result.backup_date)}</span>}
                           </div>
                         </div>
                       );
