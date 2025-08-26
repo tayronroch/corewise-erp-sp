@@ -518,7 +518,7 @@ class MplsService {
           },
           opposite_interface: connection.remoteInterface || 'N/A',
           vlan_id: connection.encapsulation.split(':')[1]?.split(',')[0] || '',
-          pw_type: 'vlan',
+          pw_type: connection.encapsulation?.startsWith('qinq:') ? 'qinq' : 'vlan',
           customer_name: customerName,
           interface_description: localInterface?.description || '',
           interface_found_in_db: true,
@@ -566,107 +566,225 @@ class MplsService {
         params: { customer: customerName }
       });
 
-      if (!response || !response.results || response.results.length === 0) {
-        console.log('❌ MPLS SERVICE - Nenhuma VPN encontrada para o cliente:', customerName);
-        return [];
+      console.log('📊 MPLS SERVICE - VPNs encontradas no relatório de cliente:', response?.results?.length || 0);
+
+      // 2. Se encontrou poucas VPNs (ou nenhuma), fazer busca abrangente por descrições
+      let shouldFallbackSearch = false;
+      if (!response || !response.results || response.results.length < 5) {
+        console.log('⚠️ MPLS SERVICE - Poucas VPNs no relatório, fazendo busca abrangente por descrições...');
+        shouldFallbackSearch = true;
       }
 
-      console.log('✅ MPLS SERVICE - VPNs encontradas para o cliente:', response.results.length);
+      let allResults: SearchResult[] = [];
 
-      // 2. Extrair lista de equipamentos únicos envolvidos nas VPNs do cliente
-      const uniqueEquipments = new Set<string>();
-      response.results.forEach((vpn: any) => {
-        if (vpn.side_a?.equipment?.hostname) uniqueEquipments.add(vpn.side_a.equipment.hostname);
-        if (vpn.side_b?.equipment?.hostname) uniqueEquipments.add(vpn.side_b.equipment.hostname);
-      });
+      // 3. Processar resultados do endpoint de relatório (se houver)
+      if (response?.results && response.results.length > 0) {
+        console.log('✅ MPLS SERVICE - Processando VPNs do relatório:', response.results.length);
+        const reportResults = await this.processCustomerReportResults(response, customerName);
+        allResults.push(...reportResults);
+      }
 
-      console.log('🎯 MPLS SERVICE - Equipamentos únicos identificados:', uniqueEquipments.size, Array.from(uniqueEquipments));
-
-      // 3. Buscar dados detalhados dos equipamentos únicos (com controle de rate limiting)
-      const equipmentDataCache: { [key: string]: any } = {};
-      const equipmentPromises = Array.from(uniqueEquipments).map(async (equipmentName, index) => {
-        // Adicionar delay progressivo para evitar rate limiting
-        await new Promise(resolve => setTimeout(resolve, index * 100)); // 100ms entre requests
+      // 4. Se necessário, fazer busca por descrições em equipamentos
+      if (shouldFallbackSearch) {
+        console.log('🔍 MPLS SERVICE - Iniciando busca por descrições em equipamentos...');
+        const fallbackResults = await this.searchCustomerByDescriptions(customerName);
         
-        try {
-          const data = await this.searchEquipmentByName(equipmentName);
-          equipmentDataCache[equipmentName] = data;
-          console.log(`✅ MPLS SERVICE - Dados carregados para ${equipmentName}`);
-          return data;
-        } catch (error) {
-          console.error(`❌ MPLS SERVICE - Erro ao buscar ${equipmentName}:`, error);
-          equipmentDataCache[equipmentName] = { localEquipment: null, remoteConnections: [] };
-          return null;
-        }
-      });
+        // Evitar duplicações baseado no vpn_id
+        const existingVpnIds = new Set(allResults.map(r => r.vpn_id));
+        const uniqueFallbackResults = fallbackResults.filter(r => 
+          r.vpn_id && !existingVpnIds.has(r.vpn_id)
+        );
+        
+        console.log('📈 MPLS SERVICE - VPNs adicionais encontradas por descrição:', uniqueFallbackResults.length);
+        allResults.push(...uniqueFallbackResults);
+      }
 
-      // Aguardar todas as requisições com timeout
-      await Promise.allSettled(equipmentPromises);
-
-      // 4. Processar VPNs usando dados dos equipamentos carregados
-      const convertedResults: SearchResult[] = [];
-      const processedVpns = new Set<number>();
-
-      response.results.forEach((vpn: any, index: number) => {
-        if (processedVpns.has(vpn.vpn_id)) {
-          return;
-        }
-        processedVpns.add(vpn.vpn_id);
-
-        // Processar lado A -> lado B
-        if (vpn.side_a?.equipment?.hostname && equipmentDataCache[vpn.side_a.equipment.hostname]) {
-          const equipmentData = equipmentDataCache[vpn.side_a.equipment.hostname];
-          
-          if (equipmentData.localEquipment) {
-            // Encontrar a conexão específica desta VPN
-            const relevantConnection = equipmentData.remoteConnections.find((conn: any) => 
-              conn.vpnId === vpn.vpn_id || 
-              (conn.remoteEquipment === vpn.side_b?.equipment?.hostname && 
-               conn.localInterface === vpn.side_a?.access_interface)
-            );
-
-            if (relevantConnection) {
-              const result = this.buildSearchResultForCustomer(
-                equipmentData, 
-                relevantConnection, 
-                customerName,
-                convertedResults.length
-              );
-              convertedResults.push(result);
-            }
-          }
-        }
-
-        // Processar lado B -> lado A
-        if (vpn.side_b?.equipment?.hostname && equipmentDataCache[vpn.side_b.equipment.hostname]) {
-          const equipmentData = equipmentDataCache[vpn.side_b.equipment.hostname];
-          
-          if (equipmentData.localEquipment) {
-            // Encontrar a conexão específica desta VPN
-            const relevantConnection = equipmentData.remoteConnections.find((conn: any) => 
-              conn.vpnId === vpn.vpn_id || 
-              (conn.remoteEquipment === vpn.side_a?.equipment?.hostname && 
-               conn.localInterface === vpn.side_b?.access_interface)
-            );
-
-            if (relevantConnection) {
-              const result = this.buildSearchResultForCustomer(
-                equipmentData, 
-                relevantConnection, 
-                customerName,
-                convertedResults.length
-              );
-              convertedResults.push(result);
-            }
-          }
-        }
-      });
-
-      console.log('🎯 MPLS SERVICE - Total de conexões processadas para o cliente:', convertedResults.length);
-      return convertedResults;
+      console.log('🎯 MPLS SERVICE - Total de conexões encontradas para o cliente:', allResults.length);
+      return allResults;
 
     } catch (error) {
       console.error('❌ MPLS SERVICE - Erro na busca por cliente:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Processa resultados do endpoint de relatório de clientes
+   */
+  private async processCustomerReportResults(response: any, customerName: string): Promise<SearchResult[]> {
+    // Extrair lista de equipamentos únicos envolvidos nas VPNs do cliente
+    const uniqueEquipments = new Set<string>();
+    response.results.forEach((vpn: any) => {
+      // Equipamentos principais
+      if (vpn.side_a?.equipment?.hostname) uniqueEquipments.add(vpn.side_a.equipment.hostname);
+      if (vpn.side_b?.equipment?.hostname) uniqueEquipments.add(vpn.side_b.equipment.hostname);
+      
+      // Equipamentos neighbors (para casos onde equipment não está disponível)
+      if (vpn.side_a?.neighbor?.hostname) uniqueEquipments.add(vpn.side_a.neighbor.hostname);
+      if (vpn.side_b?.neighbor?.hostname) uniqueEquipments.add(vpn.side_b.neighbor.hostname);
+    });
+
+    console.log('🎯 MPLS SERVICE - Equipamentos únicos identificados:', uniqueEquipments.size, Array.from(uniqueEquipments));
+
+    // Buscar dados detalhados dos equipamentos únicos (com controle de rate limiting)
+    const equipmentDataCache: { [key: string]: any } = {};
+    const equipmentPromises = Array.from(uniqueEquipments).map(async (equipmentName, index) => {
+      // Adicionar delay progressivo para evitar rate limiting
+      await new Promise(resolve => setTimeout(resolve, index * 100)); // 100ms entre requests
+      
+      try {
+        const data = await this.searchEquipmentByName(equipmentName);
+        equipmentDataCache[equipmentName] = data;
+        console.log(`✅ MPLS SERVICE - Dados carregados para ${equipmentName}`);
+        return data;
+      } catch (error) {
+        console.error(`❌ MPLS SERVICE - Erro ao buscar ${equipmentName}:`, error);
+        equipmentDataCache[equipmentName] = { localEquipment: null, remoteConnections: [] };
+        return null;
+      }
+    });
+
+    // Aguardar todas as requisições
+    await Promise.allSettled(equipmentPromises);
+
+    // Processar VPNs usando dados dos equipamentos carregados
+    const convertedResults: SearchResult[] = [];
+    const processedVpns = new Set<number>();
+
+    response.results.forEach((vpn: any) => {
+      if (processedVpns.has(vpn.vpn_id)) {
+        return;
+      }
+      processedVpns.add(vpn.vpn_id);
+
+      // Processar lado A -> lado B  
+      const sideAHostname = vpn.side_a?.equipment?.hostname || vpn.side_a?.neighbor?.hostname;
+      if (sideAHostname && equipmentDataCache[sideAHostname]) {
+        const equipmentData = equipmentDataCache[sideAHostname];
+        
+        if (equipmentData.localEquipment) {
+          const sideBHostname = vpn.side_b?.equipment?.hostname || vpn.side_b?.neighbor?.hostname;
+          const relevantConnection = equipmentData.remoteConnections.find((conn: any) => 
+            conn.vpnId === vpn.vpn_id || 
+            (conn.remoteEquipment === sideBHostname && 
+             conn.localInterface === vpn.side_a?.access_interface)
+          );
+
+          if (relevantConnection) {
+            const result = this.buildSearchResultForCustomer(
+              equipmentData, 
+              relevantConnection, 
+              customerName,
+              convertedResults.length
+            );
+            convertedResults.push(result);
+          }
+        }
+      }
+
+      // Processar lado B -> lado A
+      const sideBHostname = vpn.side_b?.equipment?.hostname || vpn.side_b?.neighbor?.hostname;
+      if (sideBHostname && equipmentDataCache[sideBHostname]) {
+        const equipmentData = equipmentDataCache[sideBHostname];
+        
+        if (equipmentData.localEquipment) {
+          const sideAHostname = vpn.side_a?.equipment?.hostname || vpn.side_a?.neighbor?.hostname;
+          const relevantConnection = equipmentData.remoteConnections.find((conn: any) => 
+            conn.vpnId === vpn.vpn_id || 
+            (conn.remoteEquipment === sideAHostname && 
+             conn.localInterface === vpn.side_b?.access_interface)
+          );
+
+          if (relevantConnection) {
+            const result = this.buildSearchResultForCustomer(
+              equipmentData, 
+              relevantConnection, 
+              customerName,
+              convertedResults.length
+            );
+            convertedResults.push(result);
+          }
+        }
+      }
+    });
+
+    return convertedResults;
+  }
+
+  /**
+   * Busca por cliente usando descrições das interfaces (busca abrangente)
+   */
+  private async searchCustomerByDescriptions(customerName: string): Promise<SearchResult[]> {
+    try {
+      console.log('🔍 MPLS SERVICE - Buscando por descrições para cliente:', customerName);
+      
+      // Lista de equipamentos principais para buscar (você pode expandir isso)
+      const mainEquipments = [
+        'PI-TERESINA-PICARRA-PE01', 'PI-TERESINA-PICARRA-PE02', 'PI-TERESINA-PICARRA-PE03',
+        'PI-TERESINA-GURUPI-PE01', 'PI-TERESINA-SANTAFE-PE01', 'PI-TERESINA-SAOVICENTE-PE01',
+        'PI-TERESINA-PLANALTO-PE01', 'PI-TERESINA-PORTOALEGRE-PE01', 'PI-TERESINA-TECNET-CE01',
+        'PI-PARNAIBA-PE01', 'PI-UNIAO-PE01', 'PI-THE-DIGITALNET-RENATO-CE01'
+      ];
+
+      const allResults: SearchResult[] = [];
+      
+      // Buscar em cada equipamento principal
+      for (const equipmentName of mainEquipments) {
+        try {
+          await new Promise(resolve => setTimeout(resolve, 150)); // Rate limiting
+          
+          console.log(`🔍 Buscando ${customerName} em ${equipmentName}...`);
+          const equipmentData = await this.searchEquipmentByName(equipmentName);
+          
+          if (equipmentData.localEquipment) {
+            // Filtrar conexões que tenham o cliente nas descrições
+            const customerConnections = equipmentData.remoteConnections.filter((conn: any) => {
+              // Verificar interface local
+              const localInterface = equipmentData.localEquipment.interfaces.find((intf: any) => 
+                intf.name === conn.localInterface
+              );
+              
+              let hasCustomer = false;
+              
+              // Verificar descrição da interface principal
+              if (localInterface?.description?.toUpperCase().includes(customerName.toUpperCase())) {
+                hasCustomer = true;
+              }
+              
+              // Verificar descrições dos membros LAG
+              if (!hasCustomer && localInterface?.type === 'lag' && localInterface?.lagMemberDetails) {
+                hasCustomer = localInterface.lagMemberDetails.some((member: any) =>
+                  member.description?.toUpperCase().includes(customerName.toUpperCase())
+                );
+              }
+              
+              return hasCustomer;
+            });
+
+            // Converter conexões encontradas para SearchResult
+            customerConnections.forEach((conn: any) => {
+              const result = this.buildSearchResultForCustomer(
+                equipmentData, 
+                conn, 
+                customerName,
+                allResults.length
+              );
+              allResults.push(result);
+            });
+            
+            if (customerConnections.length > 0) {
+              console.log(`✅ Encontradas ${customerConnections.length} conexões de ${customerName} em ${equipmentName}`);
+            }
+          }
+        } catch (error) {
+          console.log(`⚠️ Erro ao buscar ${customerName} em ${equipmentName}:`, error);
+        }
+      }
+      
+      return allResults;
+      
+    } catch (error) {
+      console.error('❌ MPLS SERVICE - Erro na busca por descrições:', error);
       return [];
     }
   }
@@ -812,7 +930,7 @@ class MplsService {
       neighbor_interface_found_in_db: connection.remoteInterface !== 'N/A',
       opposite_interface: connection.remoteInterface || 'N/A',
       vlan_id: connection.encapsulation?.split(':')[1]?.split(',')[0] || '',
-      pw_type: 'vlan',
+      pw_type: connection.encapsulation?.startsWith('qinq:') ? 'qinq' : 'vlan',
       customer_name: finalCustomerName
     };
   }

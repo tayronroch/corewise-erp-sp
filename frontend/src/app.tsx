@@ -9,6 +9,7 @@ import NetworkTopology from './components/topology/networktopology';
 import TopologyManager from './components/topology/topology-manager';
 import UserManagement from './components/users/user-management';
 import MplsAnalyzerDashboard from './components/mpls/mpls-analyzer-dashboard';
+import { TokenManager } from './services/api';
 
 const darkTheme = createTheme({
   palette: {
@@ -37,8 +38,18 @@ export default function App() {
   useEffect(() => {
     // Verificar se o usuário já está logado
     const authStatus = localStorage.getItem('isAuthenticated');
-    if (authStatus === 'true') {
-      setIsAuthenticated(true);
+    const accessToken = localStorage.getItem('access_token');
+    
+    if (authStatus === 'true' && accessToken) {
+      // Verificar se o token ainda é válido
+      if (!TokenManager.isTokenExpired(accessToken)) {
+        setIsAuthenticated(true);
+        // Iniciar sistema de refresh automático
+        TokenManager.startAutoRefresh();
+      } else {
+        // Token expirado, limpar dados e fazer logout
+        TokenManager.logout();
+      }
     }
     setLoading(false);
   }, []);
@@ -48,8 +59,8 @@ export default function App() {
   };
 
   const handleLogout = () => {
-    localStorage.removeItem('isAuthenticated');
-    localStorage.removeItem('user');
+    TokenManager.stopAutoRefresh();
+    TokenManager.logout();
     setIsAuthenticated(false);
     setCurrentModule('dashboard');
   };

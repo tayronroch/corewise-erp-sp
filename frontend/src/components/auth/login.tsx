@@ -14,7 +14,7 @@ import {
 import { Visibility, VisibilityOff } from '@mui/icons-material';
 import Particles, { initParticlesEngine } from '@tsparticles/react';
 import { loadAll } from '@tsparticles/all';
-import { api } from '../../services/api';
+import { api, TokenManager } from '../../services/api';
 
 interface LoginProps {
   onLogin: () => void;
@@ -114,6 +114,9 @@ export default function Login({ onLogin }: LoginProps) {
         
         // Configurar o token no axios para próximas requisições
         api.defaults.headers.common['Authorization'] = `Bearer ${response.data.access}`;
+        
+        // Iniciar sistema de refresh automático
+        TokenManager.startAutoRefresh();
         
         onLogin();
       }
