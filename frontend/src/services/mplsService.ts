@@ -340,8 +340,214 @@ class MplsService {
     }
   }
 
-  // Busca específica por equipamento
+  // Busca específica por equipamento - NOVA IMPLEMENTAÇÃO COM PARSER JSON
   async searchByEquipment(equipmentName: string): Promise<SearchResult[]> {
+    try {
+      console.log('🔍 MPLS SERVICE - Buscando equipamento com nova implementação:', equipmentName);
+
+      // 1. Usar a nova função de busca estruturada
+      const equipmentData = await this.searchEquipmentByName(equipmentName);
+      
+      if (!equipmentData.localEquipment) {
+        console.log('❌ MPLS SERVICE - Equipamento não encontrado');
+        return [];
+      }
+
+      // 2. Converter para o formato SearchResult[]
+      const convertedResults: SearchResult[] = equipmentData.remoteConnections.map((connection, index) => {
+        // Encontrar interface local
+        const localInterface = equipmentData.localEquipment.interfaces.find((intf: any) => 
+          intf.name === connection.localInterface
+        );
+
+        // Extrair cliente da descrição da interface
+        let customerName = connection.customer || 'N/A';
+        if (customerName === 'N/A') {
+          if (localInterface?.type === 'lag' && localInterface?.lagMemberDetails) {
+            // Para LAGs, usar descrição das interfaces membros
+            const customerMember = localInterface.lagMemberDetails.find((member: any) =>
+              member.description && member.description.toUpperCase().startsWith('CUSTOMER-')
+            );
+            if (customerMember) {
+              customerName = this.extractClientFromDescription(customerMember.description) || 'CLIENTE_DESCONHECIDO';
+            }
+          } else if (localInterface?.description) {
+            customerName = this.extractClientFromDescription(localInterface.description) || 'CLIENTE_DESCONHECIDO';
+          }
+          
+          if (customerName === 'N/A') {
+            customerName = 'CLIENTE_DESCONHECIDO';
+          }
+        }
+
+        return {
+          id: index,
+          equipment_name: equipmentData.localEquipment.equipment.hostname,
+          equipment_location: equipmentData.localEquipment.equipment.location || '',
+          backup_date: new Date().toISOString().split('T')[0], // Usar data atual como fallback
+          raw_config: '',
+          vpn_id: connection.vpnId,
+          loopback_ip: equipmentData.localEquipment.equipment.loopbackIp,
+          neighbor_ip: connection.remoteIp,
+          neighbor_hostname: connection.remoteEquipment,
+          access_interface: connection.localInterface,
+          encapsulation: connection.encapsulation,
+          description: localInterface?.description || '',
+          group_name: connection.remoteEquipment,
+          customers: [customerName],
+          highlights: [],
+          vpws_groups: [{
+            id: connection.vpnId,
+            name: `VPN ${connection.vpnId}`,
+            vpns: [{
+              id: connection.vpnId,
+              vpn_id: connection.vpnId,
+              name: `VPN ${connection.vpnId}`
+            }]
+          }],
+          customer_services: [{
+            id: index,
+            customer_name: customerName,
+            service_type: 'VPN'
+          }],
+          destination_info: {
+            hostname: connection.remoteEquipment,
+            ip: connection.remoteIp,
+            isInDatabase: true,
+            neighborIp: connection.remoteIp,
+            vpwsGroup: null,
+            localInterface: {
+              name: connection.localInterface,
+              details: {
+                ...localInterface || {},
+                // Se for LAG, incluir detalhes dos membros
+                physicalMembers: localInterface?.type === 'lag' && localInterface?.lagMemberDetails ? 
+                  localInterface.lagMemberDetails.map((member: any) => ({
+                    interface: member.name,
+                    speed: member.speed,
+                    description: member.description,
+                    customer: this.extractClientFromDescription(member.description) || 'N/A'
+                  })) : 
+                  undefined,
+                membersSummary: localInterface?.type === 'lag' && localInterface?.lagMemberDetails ?
+                  `Membros: ${localInterface.lagMemberDetails.map((m: any) => 
+                    `${m.name}(${m.speed}): ${this.extractClientFromDescription(m.description) || 'N/A'}`
+                  ).join(', ')}` :
+                  undefined
+              },
+              capacity: localInterface?.speed || 'N/A',
+              media: localInterface?.type === 'lag' ? 'lag' : 'physical',
+              description: localInterface?.description || ''
+            },
+            remoteInterface: {
+              name: connection.remoteInterface || 'N/A',
+              details: {
+                ...connection.remoteInterfaceFullData || {},
+                // Se for LAG remota, incluir detalhes dos membros
+                physicalMembers: connection.remoteInterfaceFullData?.type === 'lag' && connection.remoteInterfaceFullData?.lagMemberDetails ? 
+                  connection.remoteInterfaceFullData.lagMemberDetails.map((member: any) => ({
+                    interface: member.name,
+                    speed: member.speed,
+                    description: member.description,
+                    customer: this.extractClientFromDescription(member.description) || 'N/A'
+                  })) : 
+                  undefined,
+                membersSummary: connection.remoteInterfaceFullData?.type === 'lag' && connection.remoteInterfaceFullData?.lagMemberDetails ?
+                  `Membros Remotos: ${connection.remoteInterfaceFullData.lagMemberDetails.map((m: any) => 
+                    `${m.name}(${m.speed}): ${this.extractClientFromDescription(m.description) || 'N/A'}`
+                  ).join(', ')}` :
+                  undefined
+              },
+              capacity: this.calculateTotalInterfaceCapacity(connection.remoteInterfaceFullData) || 'N/A',
+              media: connection.remoteInterfaceFullData?.type === 'lag' ? 'lag' : 'physical',
+              description: connection.remoteInterfaceDetails || 'Interface remota'
+            },
+            sideBInterface: {
+              name: connection.localInterface,
+              details: {
+                ...localInterface || {},
+                // Se for LAG local, incluir detalhes dos membros
+                physicalMembers: localInterface?.type === 'lag' && localInterface?.lagMemberDetails ? 
+                  localInterface.lagMemberDetails.map((member: any) => ({
+                    interface: member.name,
+                    speed: member.speed,
+                    description: member.description,
+                    customer: this.extractClientFromDescription(member.description) || 'N/A'
+                  })) : 
+                  undefined,
+                membersSummary: localInterface?.type === 'lag' && localInterface?.lagMemberDetails ?
+                  `Membros Locais: ${localInterface.lagMemberDetails.map((m: any) => 
+                    `${m.name}(${m.speed}): ${this.extractClientFromDescription(m.description) || 'N/A'}`
+                  ).join(', ')}` :
+                  undefined
+              },
+              capacity: localInterface?.speed || 'N/A',
+              media: localInterface?.type === 'lag' ? 'lag' : 'physical',
+              description: localInterface?.description || ''
+            },
+            sideAInterface: {
+              name: connection.remoteInterface || 'N/A',
+              details: {
+                ...connection.remoteInterfaceFullData || {},
+                // Se for LAG remota, incluir detalhes dos membros
+                physicalMembers: connection.remoteInterfaceFullData?.type === 'lag' && connection.remoteInterfaceFullData?.lagMemberDetails ? 
+                  connection.remoteInterfaceFullData.lagMemberDetails.map((member: any) => ({
+                    interface: member.name,
+                    speed: member.speed,
+                    description: member.description,
+                    customer: this.extractClientFromDescription(member.description) || 'N/A'
+                  })) : 
+                  undefined,
+                membersSummary: connection.remoteInterfaceFullData?.type === 'lag' && connection.remoteInterfaceFullData?.lagMemberDetails ?
+                  `Membros Remotos: ${connection.remoteInterfaceFullData.lagMemberDetails.map((m: any) => 
+                    `${m.name}(${m.speed}): ${this.extractClientFromDescription(m.description) || 'N/A'}`
+                  ).join(', ')}` :
+                  undefined
+              },
+              capacity: this.calculateTotalInterfaceCapacity(connection.remoteInterfaceFullData) || 'N/A',
+              media: connection.remoteInterfaceFullData?.type === 'lag' ? 'lag' : 'physical',
+              description: connection.remoteInterfaceDetails || 'Interface remota'
+            }
+          },
+          opposite_interface: connection.remoteInterface || 'N/A',
+          vlan_id: connection.encapsulation.split(':')[1]?.split(',')[0] || '',
+          pw_type: 'vlan',
+          customer_name: customerName,
+          interface_description: localInterface?.description || '',
+          interface_found_in_db: true,
+          interface_lag_members: localInterface?.lagMembers || [],
+          interface_note: localInterface?.type === 'lag' ? 
+            `LAG LOCAL com ${localInterface?.lagMembers?.length || 0} membros: ${localInterface?.lagMemberDetails?.map((m: any) => 
+              `${m.name}(${m.speed}) - ${this.extractClientFromDescription(m.description) || 'N/A'}`
+            ).join(', ')}${
+              connection.remoteInterfaceFullData?.type === 'lag' && connection.remoteInterfaceFullData?.lagMemberDetails ? 
+              ` | LAG REMOTA com ${connection.remoteInterfaceFullData.lagMembers?.length || 0} membros: ${connection.remoteInterfaceFullData.lagMemberDetails.map((m: any) => 
+                `${m.name}(${m.speed}) - ${this.extractClientFromDescription(m.description) || 'N/A'}`
+              ).join(', ')}` : ''
+            }` : 
+            (connection.remoteInterfaceFullData?.type === 'lag' && connection.remoteInterfaceFullData?.lagMemberDetails ? 
+              `INTERFACE REMOTA LAG com ${connection.remoteInterfaceFullData.lagMembers?.length || 0} membros: ${connection.remoteInterfaceFullData.lagMemberDetails.map((m: any) => 
+                `${m.name}(${m.speed}) - ${this.extractClientFromDescription(m.description) || 'N/A'}`
+              ).join(', ')}` : ''),
+          neighbor_interface_description: connection.remoteInterfaceDetails || 'Interface remota',
+          neighbor_interface_found_in_db: connection.remoteInterface !== 'N/A',
+          neighbor_customer_name: connection.remoteCustomerName || 'N/A'
+        };
+      });
+
+      console.log('🎯 MPLS SERVICE - Total de VPNs encontradas (nova implementação):', convertedResults.length);
+      console.log('📊 MPLS SERVICE - Dados do equipamento local:', equipmentData.localEquipment.equipment);
+
+      return convertedResults;
+
+    } catch (error) {
+      console.error('❌ MPLS SERVICE - Erro na nova implementação, usando fallback:', error);
+      return this.searchByEquipmentLegacy(equipmentName);
+    }
+  }
+
+  // Implementação legada mantida como fallback
+  async searchByEquipmentLegacy(equipmentName: string): Promise<SearchResult[]> {
     try {
       console.log('🔍 MPLS SERVICE - Buscando todas as VPNs do equipamento:', equipmentName);
       
@@ -1695,7 +1901,8 @@ class MplsService {
     const genericWords = [
       'ISP', 'BORDA', 'L2L', 'P1', 'P2', 'LAG', 'VL', 'VLAN', 
       'TRUNK', 'UPLINK', 'BACKUP', 'PRIMARY', 'SECONDARY',
-      'FASE', 'ATIVACAO', 'TESTE', 'TEMP', 'TMP'
+      'FASE', 'ATIVACAO', 'TESTE', 'TEMP', 'TMP', 'NNI',
+      'ORLATELECOM', 'R1', 'PHB', 'TSA', 'LAG02', 'VL16'
     ];
 
     // 1. Primeiro, tentar padrão CUSTOMER-
@@ -1703,10 +1910,26 @@ class MplsService {
     if (customerMatch) {
       const afterCustomer = customerMatch[1];
       
-      // 2. Quebrar por hífens e analisar cada parte
-      const parts = afterCustomer.split('-').filter(part => part.length > 0);
+      // 2. Se termina com hífen, extrair até o hífen
+      let clientPart = afterCustomer;
+      if (afterCustomer.endsWith('-')) {
+        clientPart = afterCustomer.slice(0, -1);
+        
+        // Se só tem o nome do cliente (sem hífens ou nome curto), retornar diretamente
+        if (clientPart && (!clientPart.includes('-') || clientPart.length <= 10)) {
+          return clientPart.toUpperCase();
+        }
+      }
       
-      // 3. Procurar a primeira parte que não seja uma palavra genérica
+      // 2.5. Se não termina com hífen, mas é uma palavra simples, tentar extrair diretamente
+      if (!afterCustomer.endsWith('-') && !afterCustomer.includes('-') && afterCustomer.length >= 3) {
+        return afterCustomer.toUpperCase();
+      }
+      
+      // 3. Quebrar por hífens e analisar cada parte
+      const parts = clientPart.split('-').filter(part => part.length > 0);
+      
+      // 4. Procurar a primeira parte que não seja uma palavra genérica
       for (const part of parts) {
         const cleanPart = part.trim().toUpperCase();
         
@@ -1720,19 +1943,17 @@ class MplsService {
           continue;
         }
         
-        // Pular partes muito curtas (provavelmente siglas técnicas)
-        if (cleanPart.length < 3) {
-          continue;
+        // Aceitar partes com 3+ caracteres OU partes conhecidas menores
+        const knownShortClients = ['MW', 'TI', 'NET'];
+        if (cleanPart.length >= 3 || knownShortClients.includes(cleanPart)) {
+          return cleanPart;
         }
-        
-        // Esta deve ser o nome do cliente
-        return cleanPart;
       }
     }
 
-    // 4. Fallback: tentar padrões conhecidos de clientes
+    // 5. Fallback: tentar padrões conhecidos de clientes
     const knownPatterns = [
-      /(MEGALINK|VILARNET|NETPAC|TECNET|HIITECH|JRNET|TECHFIBRA|CONNECT|DIGITALNET|ACCORD|HENRIQUE)/gi
+      /(TECNET|MEGALINK|VILARNET|NETPAC|HIITECH|JRNET|TECHFIBRA|CONNECT|DIGITALNET|ACCORD|HENRIQUE|MULTLINK|INFOWEB|ULTRANET)/gi
     ];
 
     for (const pattern of knownPatterns) {
@@ -1778,6 +1999,42 @@ class MplsService {
     return 'LAG';
   }
 
+  /**
+   * Calcula capacidade total de uma interface (LAG soma os membros, física retorna própria capacidade)
+   */
+  private calculateTotalInterfaceCapacity(interfaceData: any): string {
+    if (!interfaceData) return 'N/A';
+
+    // Se for LAG, somar capacidade dos membros
+    if (interfaceData.type === 'lag' && interfaceData.lagMemberDetails && interfaceData.lagMemberDetails.length > 0) {
+      let totalCapacity = 0;
+      
+      interfaceData.lagMemberDetails.forEach((member: any) => {
+        const memberSpeed = member.speed || '0G';
+        const match = memberSpeed.match(/(\d+)([GMK]?)/);
+        if (match) {
+          let value = parseInt(match[1]);
+          const unit = match[2] || 'G';
+          
+          // Converter tudo para Gbps
+          if (unit === 'M') value = value / 1000;
+          else if (unit === 'K') value = value / 1000000;
+          
+          totalCapacity += value;
+        }
+      });
+      
+      if (totalCapacity >= 1) {
+        return `${totalCapacity}G`;
+      } else if (totalCapacity > 0) {
+        return `${Math.round(totalCapacity * 1000)}M`;
+      }
+    }
+
+    // Se for interface física, retornar velocidade própria
+    return interfaceData.speed || 'N/A';
+  }
+
   // Método auxiliar para encontrar informações de interface
   private findInterfaceInfo(data: any, interfaceName: string): any {
     // Buscar em ten-gigabit-ethernet
@@ -1797,6 +2054,902 @@ class MplsService {
     }
     
     return null;
+  }
+
+  /**
+   * Parser para extrair dados estruturados do JSON de backup dos equipamentos MPLS
+   * Implementa a lógica de correlação conforme especificado pelo usuário
+   */
+  async parseEquipmentBackupJson(jsonData: any, equipmentName?: string): Promise<{
+    equipment: {
+      hostname: string;
+      loopbackIp: string;
+      location?: string;
+    };
+    interfaces: Array<{
+      name: string;
+      type: 'physical' | 'lag';
+      description: string;
+      speed: string;
+      isCustomerInterface: boolean;
+      lagMembers?: string[];
+      lagMemberDetails?: any[];
+      chassisId?: number;
+      slotId?: number;
+      portId?: number;
+    }>;
+    vpns: Array<{
+      vpnId: number;
+      groupName: string;
+      neighborIp: string;
+      neighborHostname?: string;
+      accessInterface: string;
+      encapsulationType: 'qinq' | 'vlan';
+      encapsulationVlans: string[];
+      description?: string;
+      pwId: number;
+      pwType: string;
+    }>;
+  }> {
+    console.log('🔍 MPLS SERVICE - Iniciando parse do JSON do equipamento');
+    console.log('🔍 MPLS SERVICE - Estrutura do JSON recebido:', Object.keys(jsonData.data || {}));
+    
+    // 1. Extrair dados básicos do equipamento
+    const hostname = jsonData.data?.['dmos-base:config']?.['dmos-sys-config:system']?.hostname || equipmentName || 'N/A';
+    const equipment = {
+      hostname,
+      loopbackIp: this.extractLoopbackIp(jsonData),
+      location: this.extractLocation(hostname)
+    };
+
+    console.log('📋 MPLS SERVICE - Dados do equipamento:', equipment);
+
+    // 2. Extrair interfaces LAG
+    const lagInterfaces = this.extractLagInterfaces(jsonData);
+    console.log('🔗 MPLS SERVICE - LAGs encontradas:', lagInterfaces.length);
+
+    // 3. Extrair interfaces físicas 
+    const physicalInterfaces = this.extractPhysicalInterfaces(jsonData);
+    console.log('🔌 MPLS SERVICE - Interfaces físicas encontradas:', physicalInterfaces.length);
+
+    // 4. Extrair VPNs e suas correlações
+    const vpns = this.extractVpns(jsonData);
+    console.log('🌐 MPLS SERVICE - VPNs encontradas:', vpns.length);
+
+    // 5. Combinar todas as interfaces
+    const allInterfaces = [...lagInterfaces, ...physicalInterfaces];
+
+    return {
+      equipment,
+      interfaces: allInterfaces,
+      vpns
+    };
+  }
+
+  /**
+   * Extrai IP de loopback do equipamento
+   */
+  private extractLoopbackIp(jsonData: any): string {
+    const loopbacks = jsonData.data?.['dmos-base:config']?.interface?.['dmos-ip-application:loopback'];
+    if (loopbacks && loopbacks.length > 0) {
+      const loopback0 = loopbacks.find((l: any) => l.id === '0');
+      if (loopback0?.ipv4?.address?.[0]?.ip) {
+        return loopback0.ipv4.address[0].ip.split('/')[0]; // Remove a máscara /32
+      }
+    }
+    return 'N/A';
+  }
+
+  /**
+   * Extrai localização baseada no hostname do equipamento (padrão: ESTADO-CIDADE-*)
+   */
+  private extractLocation(hostname: string): string {
+    if (!hostname || hostname === 'N/A') return 'N/A';
+    
+    const parts = hostname.split('-');
+    if (parts.length >= 2) {
+      return `${parts[0]}-${parts[1]}`; // Ex: MA-CANABRAVA de MA-CANABRAVA-PE01
+    }
+    
+    return hostname;
+  }
+
+  /**
+   * Extrai interfaces LAG (agregadas) do JSON
+   */
+  private extractLagInterfaces(jsonData: any): Array<{
+    name: string;
+    type: 'lag';
+    description: string;
+    speed: string;
+    isCustomerInterface: boolean;
+    lagMembers: string[];
+    lagMemberDetails: any[];
+  }> {
+    const interfaces: Array<any> = [];
+    // Verificar se é 'lacp:link-aggregation' ou 'dmos-lag:link-aggregation'
+    const lagData = jsonData.data?.['lacp:link-aggregation']?.interface?.lag || 
+                   jsonData.data?.['dmos-lag:link-aggregation']?.interface?.lag;
+    
+    if (!lagData || !Array.isArray(lagData)) {
+      console.log('⚠️ MPLS SERVICE - Nenhuma LAG encontrada no JSON');
+      return interfaces;
+    }
+
+    // Extrair interfaces físicas para buscar descrições dos membros
+    const physicalInterfaces = this.extractPhysicalInterfacesMap(jsonData);
+
+    lagData.forEach((lag: any) => {
+      const lagId = lag['lag-id'];
+      const members = lag['interface-config']?.map((ic: any) => ic['interface-name']) || [];
+      
+      // Buscar descrições das interfaces membros
+      const memberDetails = members.map((memberName: string) => {
+        const physInterface = physicalInterfaces[memberName];
+        return {
+          name: memberName,
+          description: physInterface?.description || '',
+          speed: physInterface?.speed || this.extractInterfaceCapacity(memberName),
+          chassisId: physInterface?.chassisId,
+          slotId: physInterface?.slotId,
+          portId: physInterface?.portId
+        };
+      });
+
+      // Usar descrição do primeiro membro como descrição da LAG (lógica de cliente)
+      let lagDescription = lag.description || '';
+      let clientDescription = '';
+      
+      // Se não tem descrição na LAG ou não é de cliente, buscar nas interfaces membros
+      if (!lagDescription || !lagDescription.includes('CUSTOMER-')) {
+        const customerMember = memberDetails.find(member => 
+          member.description && member.description.toUpperCase().startsWith('CUSTOMER-')
+        );
+        
+        if (customerMember) {
+          clientDescription = customerMember.description;
+          // Extrair nome do cliente da descrição da interface física
+          lagDescription = this.extractClientFromDescription(clientDescription) || clientDescription;
+        }
+      }
+
+      // Verificar se é interface de cliente baseado nas descrições dos membros
+      const isCustomerInterface = memberDetails.some(member => 
+        member.description && member.description.toUpperCase().startsWith('CUSTOMER-')
+      ) || this.isCustomerLagDescription(lagDescription);
+      
+      // Calcular velocidade baseada nos membros
+      const speed = this.calculateLagSpeedFromMembers(members, jsonData);
+
+      interfaces.push({
+        name: `lag-${lagId}`,
+        type: 'lag' as const,
+        description: lagDescription,
+        speed,
+        isCustomerInterface,
+        lagMembers: members,
+        lagMemberDetails: memberDetails
+      });
+
+      console.log(`🔗 LAG ${lagId}: ${lagDescription} (${speed}) - Cliente: ${isCustomerInterface}`);
+      console.log(`   Membros: ${memberDetails.map(m => `${m.name}(${m.speed})`).join(', ')}`);
+      if (clientDescription && clientDescription !== lagDescription) {
+        console.log(`   Descrição do cliente: ${clientDescription}`);
+      }
+    });
+
+    return interfaces;
+  }
+
+  /**
+   * Extrai interfaces físicas em formato de mapa para consulta rápida
+   */
+  private extractPhysicalInterfacesMap(jsonData: any): { [key: string]: any } {
+    const interfaceMap: { [key: string]: any } = {};
+    const interfaceData = jsonData.data?.['dmos-base:config']?.interface;
+
+    if (!interfaceData) return interfaceMap;
+
+    // Mapear gigabit-ethernet
+    const gigInterfaces = interfaceData['dmos-interface-ethernet:gigabit-ethernet'] || [];
+    gigInterfaces.forEach((intf: any) => {
+      const name = `gigabit-ethernet-${intf['chassis-id']}/${intf['slot-id']}/${intf['port-id']}`;
+      interfaceMap[name] = {
+        description: intf.description || '',
+        speed: intf.speed === '1G' ? '1G' : intf.speed || '1G',
+        chassisId: intf['chassis-id'],
+        slotId: intf['slot-id'],
+        portId: intf['port-id']
+      };
+    });
+
+    // Mapear ten-gigabit-ethernet
+    const tenGigInterfaces = interfaceData['dmos-interface-ethernet:ten-gigabit-ethernet'] || [];
+    tenGigInterfaces.forEach((intf: any) => {
+      const name = `ten-gigabit-ethernet-${intf['chassis-id']}/${intf['slot-id']}/${intf['port-id']}`;
+      interfaceMap[name] = {
+        description: intf.description || '',
+        speed: intf.speed === '10G' ? '10G' : '10G',
+        chassisId: intf['chassis-id'],
+        slotId: intf['slot-id'],
+        portId: intf['port-id']
+      };
+    });
+
+    // Mapear hundred-gigabit-ethernet
+    const hundredGigInterfaces = interfaceData['dmos-interface-ethernet:hundred-gigabit-ethernet'] || [];
+    hundredGigInterfaces.forEach((intf: any) => {
+      const name = `hundred-gigabit-ethernet-${intf['chassis-id']}/${intf['slot-id']}/${intf['port-id']}`;
+      interfaceMap[name] = {
+        description: intf.description || '',
+        speed: intf.speed === '100G' ? '100G' : '100G',
+        chassisId: intf['chassis-id'],
+        slotId: intf['slot-id'],
+        portId: intf['port-id']
+      };
+    });
+
+    return interfaceMap;
+  }
+
+  /**
+   * Extrai interfaces físicas do JSON
+   */
+  private extractPhysicalInterfaces(jsonData: any): Array<{
+    name: string;
+    type: 'physical';
+    description: string;
+    speed: string;
+    isCustomerInterface: boolean;
+    chassisId: number;
+    slotId: number;
+    portId: number;
+  }> {
+    const interfaces: Array<any> = [];
+    const interfaceData = jsonData.data?.['dmos-base:config']?.interface;
+
+    if (!interfaceData) {
+      console.log('⚠️ MPLS SERVICE - Nenhuma interface física encontrada no JSON');
+      return interfaces;
+    }
+
+    // Extrair gigabit-ethernet
+    const gigInterfaces = interfaceData['dmos-interface-ethernet:gigabit-ethernet'] || [];
+    gigInterfaces.forEach((intf: any) => {
+      const name = `gigabit-ethernet-${intf['chassis-id']}/${intf['slot-id']}/${intf['port-id']}`;
+      const description = intf.description || '';
+      const speed = intf.speed === '1G' ? '1G' : intf.speed || '1G';
+      const isCustomerInterface = description.toUpperCase().startsWith('CUSTOMER-');
+
+      interfaces.push({
+        name,
+        type: 'physical' as const,
+        description,
+        speed,
+        isCustomerInterface,
+        chassisId: intf['chassis-id'],
+        slotId: intf['slot-id'],
+        portId: intf['port-id']
+      });
+
+      if (isCustomerInterface) {
+        console.log(`🔌 Interface Cliente: ${name} - ${description} (${speed})`);
+      }
+    });
+
+    // Extrair ten-gigabit-ethernet
+    const tenGigInterfaces = interfaceData['dmos-interface-ethernet:ten-gigabit-ethernet'] || [];
+    tenGigInterfaces.forEach((intf: any) => {
+      const name = `ten-gigabit-ethernet-${intf['chassis-id']}/${intf['slot-id']}/${intf['port-id']}`;
+      const description = intf.description || '';
+      const speed = intf.speed === '10G' ? '10G' : this.extractInterfaceCapacity(name);
+      const isCustomerInterface = description.toUpperCase().startsWith('CUSTOMER-');
+
+      interfaces.push({
+        name,
+        type: 'physical' as const,
+        description,
+        speed,
+        isCustomerInterface,
+        chassisId: intf['chassis-id'],
+        slotId: intf['slot-id'],
+        portId: intf['port-id']
+      });
+
+      if (isCustomerInterface) {
+        console.log(`🔌 Interface Cliente: ${name} - ${description} (${speed})`);
+      }
+    });
+
+    // Extrair hundred-gigabit-ethernet
+    const hundredGigInterfaces = interfaceData['dmos-interface-ethernet:hundred-gigabit-ethernet'] || [];
+    hundredGigInterfaces.forEach((intf: any) => {
+      const name = `hundred-gigabit-ethernet-${intf['chassis-id']}/${intf['slot-id']}/${intf['port-id']}`;
+      const description = intf.description || '';
+      const speed = intf.speed === '100G' ? '100G' : this.extractInterfaceCapacity(name);
+      const isCustomerInterface = description.toUpperCase().startsWith('CUSTOMER-');
+
+      interfaces.push({
+        name,
+        type: 'physical' as const,
+        description,
+        speed,
+        isCustomerInterface,
+        chassisId: intf['chassis-id'],
+        slotId: intf['slot-id'],
+        portId: intf['port-id']
+      });
+
+      if (isCustomerInterface) {
+        console.log(`🔌 Interface Cliente: ${name} - ${description} (${speed})`);
+      }
+    });
+
+    return interfaces;
+  }
+
+  /**
+   * Extrai todas as VPNs do JSON
+   */
+  private extractVpns(jsonData: any): Array<{
+    vpnId: number;
+    groupName: string;
+    neighborIp: string;
+    neighborHostname?: string;
+    accessInterface: string;
+    encapsulationType: 'qinq' | 'vlan';
+    encapsulationVlans: string[];
+    description?: string;
+    pwId: number;
+    pwType: string;
+  }> {
+    const vpns: Array<any> = [];
+    const l2vpnConfig = jsonData.data?.['router-mpls:mpls']?.['l2-vpn:l2vpn-config']?.l2vpn;
+    
+    if (!l2vpnConfig?.['vpws-group']) {
+      console.log('⚠️ MPLS SERVICE - Nenhuma VPN encontrada no JSON');
+      return vpns;
+    }
+
+    l2vpnConfig['vpws-group'].forEach((group: any) => {
+      const groupName = group['group-name'];
+      console.log(`🌐 Processando grupo VPWS: ${groupName}`);
+
+      if (group.vpn && Array.isArray(group.vpn)) {
+        group.vpn.forEach((vpn: any) => {
+          const vpnId = parseInt(vpn['vpn-name']);
+          const description = vpn.description || '';
+          
+          // Extrair dados do neighbor
+          const neighbor = vpn.neighbor?.[0];
+          const neighborIp = neighbor?.['neighbor-ip'] || '';
+          const pwId = neighbor?.['pw-id'] || 0;
+          const pwType = neighbor?.['pw-type']?.type || 'vlan';
+          
+          // Extrair interface de acesso
+          const accessInterface = vpn['access-interface']?.[0];
+          const interfaceName = accessInterface?.['interface-name'] || '';
+          
+          // Determinar tipo de encapsulamento
+          let encapsulationType: 'qinq' | 'vlan' = 'vlan';
+          let encapsulationVlans: string[] = [];
+          
+          if (accessInterface?.['dmos-mpls-l2vpn-vpws:encapsulation']) {
+            const encap = accessInterface['dmos-mpls-l2vpn-vpws:encapsulation'];
+            
+            // QinQ: múltiplas VLANs em array
+            if (encap.dot1q && Array.isArray(encap.dot1q) && encap.dot1q.length > 1) {
+              encapsulationType = 'qinq';
+              encapsulationVlans = encap.dot1q.map((v: any) => v.toString());
+            }
+            // VLAN tradicional: single VLAN ou array com um elemento
+            else if (encap.dot1q) {
+              encapsulationType = 'vlan';
+              encapsulationVlans = Array.isArray(encap.dot1q) ? 
+                encap.dot1q.map((v: any) => v.toString()) : 
+                [encap.dot1q.toString()];
+            }
+          }
+          
+          // Se não tem encapsulação específica, usar dot1q diretamente da interface
+          if (encapsulationVlans.length === 0 && accessInterface?.dot1q) {
+            encapsulationType = 'vlan';
+            encapsulationVlans = [accessInterface.dot1q.toString()];
+          }
+
+          vpns.push({
+            vpnId,
+            groupName,
+            neighborIp,
+            neighborHostname: this.extractHostnameFromGroupName(groupName),
+            accessInterface: interfaceName,
+            encapsulationType,
+            encapsulationVlans,
+            description,
+            pwId,
+            pwType
+          });
+
+          console.log(`🔗 VPN ${vpnId}: ${interfaceName} -> ${neighborIp} (${groupName})`);
+          console.log(`   Encapsulamento: ${encapsulationType} [${encapsulationVlans.join(', ')}]`);
+        });
+      }
+    });
+
+    return vpns;
+  }
+
+  /**
+   * Verifica se uma LAG é para cliente baseada na descrição
+   */
+  private isCustomerLagDescription(description: string): boolean {
+    if (!description) return false;
+    
+    // LAGs de clientes geralmente não são de outros PEs ou ISPs
+    const networkKeywords = ['PE01', 'PE00', 'PE02', 'SANTANADOMARANHAO', 'PLACAS'];
+    const uppercaseDesc = description.toUpperCase();
+    
+    // Se contém palavras de rede/backbone, não é cliente
+    for (const keyword of networkKeywords) {
+      if (uppercaseDesc.includes(keyword)) {
+        return false;
+      }
+    }
+    
+    // Se contém ISP, pode ser cliente dependendo do contexto
+    if (uppercaseDesc.includes('ISP-')) {
+      return true; // ISPs terceiros são clientes
+    }
+    
+    // Se contém palavras típicas de clientes
+    const customerKeywords = ['MULTLINK', 'INFOWEB', 'ORLATELECOM'];
+    for (const keyword of customerKeywords) {
+      if (uppercaseDesc.includes(keyword)) {
+        return true;
+      }
+    }
+    
+    return false;
+  }
+
+  /**
+   * Calcula velocidade de LAG baseada nos membros
+   */
+  private calculateLagSpeedFromMembers(members: string[], jsonData: any): string {
+    if (!members || members.length === 0) return 'N/A';
+
+    let totalSpeed = 0;
+    const interfaceData = jsonData.data?.['dmos-base:config']?.interface;
+
+    members.forEach((memberName: string) => {
+      let memberSpeed = 0;
+
+      // Buscar em ten-gigabit-ethernet
+      const tenGigInterfaces = interfaceData?.['dmos-interface-ethernet:ten-gigabit-ethernet'] || [];
+      const tenGigMember = tenGigInterfaces.find((intf: any) => {
+        const name = `ten-gigabit-ethernet-${intf['chassis-id']}/${intf['slot-id']}/${intf['port-id']}`;
+        return name === memberName;
+      });
+      
+      if (tenGigMember) {
+        memberSpeed = 10; // 10G
+      }
+
+      // Buscar em hundred-gigabit-ethernet
+      const hundredGigInterfaces = interfaceData?.['dmos-interface-ethernet:hundred-gigabit-ethernet'] || [];
+      const hundredGigMember = hundredGigInterfaces.find((intf: any) => {
+        const name = `hundred-gigabit-ethernet-${intf['chassis-id']}/${intf['slot-id']}/${intf['port-id']}`;
+        return name === memberName;
+      });
+      
+      if (hundredGigMember) {
+        memberSpeed = 100; // 100G
+      }
+
+      totalSpeed += memberSpeed;
+    });
+
+    return totalSpeed > 0 ? `${totalSpeed}G` : 'N/A';
+  }
+
+  /**
+   * Extrai hostname do equipment remoto baseado no group-name
+   */
+  private extractHostnameFromGroupName(groupName: string): string {
+    // Group name já é o hostname do equipamento remoto
+    return groupName;
+  }
+
+  /**
+   * Busca equipamento por nome e retorna dados estruturados
+   */
+  async searchEquipmentByName(equipmentName: string): Promise<{
+    localEquipment: any;
+    remoteConnections: Array<{
+      vpnId: number;
+      remoteEquipment: string;
+      remoteIp: string;
+      localInterface: string;
+      remoteInterface?: string;
+      encapsulation: string;
+      customer?: string;
+      remoteInterfaceDetails?: string;
+      remoteCustomerName?: string;
+      remoteInterfaceFullData?: any;
+    }>;
+  }> {
+    try {
+      console.log(`🔍 MPLS SERVICE - Buscando equipamento: ${equipmentName}`);
+
+      // 1. Buscar JSON backup do equipamento
+      const jsonBackup = await this.request<any>('/equipment/json-backup/', {
+        params: { equipment: equipmentName }
+      });
+
+      if (!jsonBackup?.json_data) {
+        console.log('❌ MPLS SERVICE - JSON backup não encontrado');
+        console.log('📋 MPLS SERVICE - Resposta recebida:', jsonBackup);
+        return { localEquipment: null, remoteConnections: [] };
+      }
+
+      // 2. Parse dos dados locais
+      const parsedData = await this.parseEquipmentBackupJson(jsonBackup.json_data, equipmentName);
+      console.log('✅ MPLS SERVICE - Dados locais parseados:', parsedData.equipment);
+
+      // 3. Para cada VPN, buscar dados do equipamento remoto
+      const remoteConnections = await Promise.all(
+        parsedData.vpns.map(async (vpn) => {
+          const remoteEquipmentName = vpn.neighborHostname || vpn.groupName;
+          
+          // Tentar buscar dados do equipamento remoto
+          let remoteInterface = 'N/A';
+          let customer = 'N/A';
+          
+          try {
+            const remoteJsonBackup = await this.request<any>('/equipment/json-backup/', {
+              params: { equipment: remoteEquipmentName }
+            });
+            
+            if (remoteJsonBackup?.json_data) {
+              const remoteParsedData = await this.parseEquipmentBackupJson(remoteJsonBackup.json_data, remoteEquipmentName);
+              
+              // Encontrar VPN correspondente no equipamento remoto
+              const matchingVpn = remoteParsedData.vpns.find(v => 
+                v.vpnId === vpn.vpnId && v.neighborIp === parsedData.equipment.loopbackIp
+              );
+              
+              if (matchingVpn) {
+                remoteInterface = matchingVpn.accessInterface;
+              }
+              
+              // Tentar extrair cliente da interface local
+              const localInterfaceData = parsedData.interfaces.find(i => 
+                i.name === vpn.accessInterface
+              );
+              
+              if (localInterfaceData) {
+                // Se for LAG, usar descrição dos membros
+                if (localInterfaceData.type === 'lag' && localInterfaceData.lagMemberDetails) {
+                  const customerMember = localInterfaceData.lagMemberDetails.find((member: any) =>
+                    member.description && member.description.toUpperCase().startsWith('CUSTOMER-')
+                  );
+                  if (customerMember) {
+                    customer = this.extractClientFromDescription(customerMember.description) || 'N/A';
+                  }
+                } else if (localInterfaceData.description) {
+                  customer = this.extractClientFromDescription(localInterfaceData.description) || 'N/A';
+                }
+              }
+            }
+          } catch (error) {
+            console.log(`⚠️ MPLS SERVICE - Erro ao buscar equipamento remoto ${remoteEquipmentName}:`, error);
+          }
+
+          return {
+            vpnId: vpn.vpnId,
+            remoteEquipment: remoteEquipmentName,
+            remoteIp: vpn.neighborIp,
+            localInterface: vpn.accessInterface,
+            remoteInterface,
+            encapsulation: `${vpn.encapsulationType}:${vpn.encapsulationVlans.join(',')}`,
+            customer
+          };
+        })
+      );
+
+      // 4. ENRIQUECER com informações das interfaces remotas
+      const enrichedConnections = await Promise.all(
+        remoteConnections.map(async (connection) => {
+          let remoteInterfaceDetails = 'N/A';
+          let remoteCustomerName = 'N/A';
+          let remoteInterfaceFullData: any = null;
+
+          if (connection.remoteInterface && connection.remoteInterface !== 'N/A') {
+            try {
+              // Buscar dados do equipamento remoto novamente para obter detalhes da interface
+              const remoteJsonBackup = await this.request<any>('/equipment/json-backup/', {
+                params: { equipment: connection.remoteEquipment }
+              });
+              
+              if (remoteJsonBackup?.json_data) {
+                const remoteParsedData = await this.parseEquipmentBackupJson(remoteJsonBackup.json_data, connection.remoteEquipment);
+                
+                const remoteInterfaceData = remoteParsedData.interfaces.find((i: any) => 
+                  i.name === connection.remoteInterface
+                );
+
+                if (remoteInterfaceData) {
+                  remoteInterfaceFullData = remoteInterfaceData;
+                  
+                  // Se for LAG remota, usar descrição dos membros
+                  if (remoteInterfaceData.type === 'lag' && remoteInterfaceData.lagMemberDetails) {
+                    const customerMember = remoteInterfaceData.lagMemberDetails.find((member: any) =>
+                      member.description && member.description.toUpperCase().startsWith('CUSTOMER-')
+                    );
+                    if (customerMember) {
+                      remoteCustomerName = this.extractClientFromDescription(customerMember.description) || 'N/A';
+                      remoteInterfaceDetails = customerMember.description;
+                    } else {
+                      // Se não encontrou CUSTOMER-, usar o primeiro membro com descrição
+                      const firstMemberWithDesc = remoteInterfaceData.lagMemberDetails.find((member: any) => member.description);
+                      if (firstMemberWithDesc) {
+                        remoteInterfaceDetails = firstMemberWithDesc.description;
+                        remoteCustomerName = this.extractClientFromDescription(firstMemberWithDesc.description) || 'N/A';
+                      }
+                    }
+                  } else if (remoteInterfaceData.description) {
+                    remoteCustomerName = this.extractClientFromDescription(remoteInterfaceData.description) || 'N/A';
+                    remoteInterfaceDetails = remoteInterfaceData.description;
+                  }
+                }
+              }
+            } catch (error) {
+              console.log(`⚠️ MPLS SERVICE - Erro ao enriquecer interface remota ${connection.remoteInterface}:`, error);
+            }
+          }
+
+          return {
+            ...connection,
+            remoteInterfaceDetails,
+            remoteCustomerName,
+            remoteInterfaceFullData
+          };
+        })
+      );
+
+      console.log('🎯 MPLS SERVICE - Conexões remotas identificadas:', enrichedConnections.length);
+
+      return {
+        localEquipment: parsedData,
+        remoteConnections: enrichedConnections
+      };
+
+    } catch (error) {
+      console.error('❌ MPLS SERVICE - Erro na busca por equipamento:', error);
+      return { localEquipment: null, remoteConnections: [] };
+    }
+  }
+
+  /**
+   * Gera relatório ponta a ponta mostrando conexões entre dois equipamentos
+   */
+  async generatePointToPointReport(equipmentA: string, equipmentB?: string): Promise<{
+    equipmentA: any;
+    equipmentB?: any;
+    connections: Array<{
+      vpnId: number;
+      sideA: {
+        equipment: string;
+        loopbackIp: string;
+        interface: string;
+        interfaceDetails: any;
+        customer: string;
+        encapsulation: string;
+      };
+      sideB: {
+        equipment: string;
+        loopbackIp: string;
+        interface: string;
+        interfaceDetails: any;
+        customer: string;
+        encapsulation: string;
+      };
+    }>;
+    summary: {
+      totalVpns: number;
+      uniqueCustomers: string[];
+      totalBandwidth: string;
+    };
+  }> {
+    try {
+      console.log(`🔍 MPLS SERVICE - Gerando relatório ponta a ponta: ${equipmentA} ${equipmentB ? `<-> ${equipmentB}` : ''}`);
+
+      // 1. Buscar dados do equipamento A
+      const dataA = await this.searchEquipmentByName(equipmentA);
+      
+      if (!dataA.localEquipment) {
+        throw new Error(`Equipamento ${equipmentA} não encontrado`);
+      }
+
+      let dataB: any = null;
+      let connections: any[] = [];
+
+      if (equipmentB) {
+        // 2. Buscar dados do equipamento B  
+        dataB = await this.searchEquipmentByName(equipmentB);
+        
+        if (!dataB.localEquipment) {
+          throw new Error(`Equipamento ${equipmentB} não encontrado`);
+        }
+
+        // 3. Encontrar conexões entre A e B
+        const connectionsAtoB = dataA.remoteConnections.filter(conn => 
+          conn.remoteEquipment === equipmentB
+        );
+
+        const connectionsBtoA = dataB.remoteConnections.filter(conn => 
+          conn.remoteEquipment === equipmentA
+        );
+
+        // 4. Correlacionar VPNs bidirecionais
+        connections = connectionsAtoB.map(connA => {
+          const connB = connectionsBtoA.find(cb => cb.vpnId === connA.vpnId);
+          
+          // Encontrar interfaces locais
+          const interfaceA = dataA.localEquipment.interfaces.find((intf: any) => 
+            intf.name === connA.localInterface
+          );
+          const interfaceB = dataB?.localEquipment?.interfaces.find((intf: any) => 
+            intf.name === connB?.localInterface
+          );
+
+          // Extrair clientes
+          const customerA = this.extractClientFromDescription(interfaceA?.description || '') || 'N/A';
+          const customerB = this.extractClientFromDescription(interfaceB?.description || '') || 'N/A';
+
+          return {
+            vpnId: connA.vpnId,
+            sideA: {
+              equipment: equipmentA,
+              loopbackIp: dataA.localEquipment.equipment.loopbackIp,
+              interface: connA.localInterface,
+              interfaceDetails: interfaceA || {},
+              customer: customerA,
+              encapsulation: connA.encapsulation
+            },
+            sideB: {
+              equipment: equipmentB,
+              loopbackIp: dataB.localEquipment.equipment.loopbackIp,
+              interface: connB?.localInterface || 'N/A',
+              interfaceDetails: interfaceB || {},
+              customer: customerB,
+              encapsulation: connB?.encapsulation || 'N/A'
+            }
+          };
+        });
+      } else {
+        // 3. Se não especificou equipamento B, mostrar todas as conexões do A
+        connections = dataA.remoteConnections.map(conn => {
+          const interfaceA = dataA.localEquipment.interfaces.find((intf: any) => 
+            intf.name === conn.localInterface
+          );
+
+          const customerA = this.extractClientFromDescription(interfaceA?.description || '') || 'N/A';
+
+          return {
+            vpnId: conn.vpnId,
+            sideA: {
+              equipment: equipmentA,
+              loopbackIp: dataA.localEquipment.equipment.loopbackIp,
+              interface: conn.localInterface,
+              interfaceDetails: interfaceA || {},
+              customer: customerA,
+              encapsulation: conn.encapsulation
+            },
+            sideB: {
+              equipment: conn.remoteEquipment,
+              loopbackIp: conn.remoteIp,
+              interface: conn.remoteInterface || 'N/A',
+              interfaceDetails: {},
+              customer: 'N/A',
+              encapsulation: conn.encapsulation
+            }
+          };
+        });
+      }
+
+      // 5. Gerar resumo
+      const uniqueCustomers = Array.from(new Set([
+        ...connections.map(c => c.sideA.customer),
+        ...connections.map(c => c.sideB.customer)
+      ])).filter(c => c !== 'N/A');
+
+      // Calcular bandwidth total (aproximação baseada nas interfaces)
+      let totalBandwidthGbps = 0;
+      connections.forEach(conn => {
+        if (conn.sideA.interfaceDetails.speed) {
+          const speedMatch = conn.sideA.interfaceDetails.speed.match(/(\d+)G/);
+          if (speedMatch) {
+            totalBandwidthGbps += parseInt(speedMatch[1]);
+          }
+        }
+      });
+
+      const summary = {
+        totalVpns: connections.length,
+        uniqueCustomers,
+        totalBandwidth: totalBandwidthGbps > 0 ? `${totalBandwidthGbps}G` : 'N/A'
+      };
+
+      console.log('🎯 MPLS SERVICE - Relatório gerado:', {
+        equipmentA,
+        equipmentB,
+        connectionsFound: connections.length,
+        uniqueCustomers: uniqueCustomers.length
+      });
+
+      return {
+        equipmentA: dataA.localEquipment,
+        equipmentB: dataB?.localEquipment,
+        connections,
+        summary
+      };
+
+    } catch (error) {
+      console.error('❌ MPLS SERVICE - Erro ao gerar relatório ponta a ponta:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Função de teste para validar o parser com dados simulados
+   */
+  async testEquipmentParser(equipmentName: string = 'MA-CANABRAVA-PE01'): Promise<void> {
+    console.log('🧪 MPLS SERVICE - Testando parser de equipamento:', equipmentName);
+    
+    try {
+      const result = await this.searchEquipmentByName(equipmentName);
+      
+      console.log('✅ TESTE - Resultado do parser:');
+      console.log('📋 Equipamento:', result.localEquipment?.equipment);
+      console.log('🔗 Interfaces encontradas:', result.localEquipment?.interfaces.length);
+      console.log('🌐 VPNs encontradas:', result.localEquipment?.vpns.length);
+      console.log('🔄 Conexões remotas:', result.remoteConnections.length);
+      
+      // Mostrar interfaces de cliente
+      const customerInterfaces = result.localEquipment?.interfaces.filter((i: any) => i.isCustomerInterface);
+      console.log('👥 Interfaces de clientes:', customerInterfaces?.length);
+      customerInterfaces?.forEach((intf: any) => {
+        console.log(`   - ${intf.name}: ${intf.description} (${intf.speed})`);
+      });
+
+    } catch (error) {
+      console.error('❌ TESTE - Erro no parser:', error);
+    }
+  }
+
+  /**
+   * Função de teste para validar extração de nomes de clientes
+   */
+  testClientExtraction(): void {
+    console.log('🧪 MPLS SERVICE - Testando extração de clientes');
+    
+    const testCases = [
+      'CUSTOMER-TECNET-',
+      'CUSTOMER-TECNET-L2L-VL100',
+      'CUSTOMER-MULTLINKTUTOIA-P1-LAG10',
+      'CUSTOMER-MEGALINK-NNI-VL16',
+      'CUSTOMER-ISP-ULTRANET-L2L-VL209-210',
+      'CUSTOMER-INFOWEB-ORLATELECOM-L2L-P1-LAG11',
+      'CUSTOMER-MW-SOLUTIONS-P1',
+      'CUSTOMER-NET-',
+      'CUSTOMER-TI-SYSTEM-'
+    ];
+
+    testCases.forEach(testCase => {
+      const result = this.extractClientFromDescription(testCase);
+      console.log(`📝 "${testCase}" → "${result}"`);
+    });
   }
 }
 
