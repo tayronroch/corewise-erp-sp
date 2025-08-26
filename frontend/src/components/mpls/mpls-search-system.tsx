@@ -89,7 +89,7 @@ const MplsSearchSystem: React.FC = () => {
   );
 
   // Bloco consolidado de interface (LOCAL/REMOTA) com anti-duplicação
-  const InterfaceBlock: React.FC<{ label: 'LOCAL' | 'REMOTA'; itf?: any; fallbackLag?: string }> = ({ label, itf, fallbackLag }) => {
+  const InterfaceBlock: React.FC<{ label: 'LOCAL' | 'REMOTA'; itf?: any; fallbackLag?: string; result?: any }> = ({ label, itf, fallbackLag, result }) => {
     if (!itf) return null;
 
     const rawName: string | undefined = itf?.name;
@@ -98,29 +98,83 @@ const MplsSearchSystem: React.FC = () => {
 
     const capacity = itf?.capacity && itf.capacity !== 'N/A' ? itf.capacity : undefined;
 
+    // Membros das LAGs - usando tanto array antigo quanto novo formato
     const membersArr: string[] = Array.isArray(itf?.details?.lag_members) ? itf.details.lag_members : [];
     const members = Array.from(new Set(membersArr.filter(m => m && m !== rawName)));
+
+    // Informações detalhadas dos membros físicos (nova implementação)
+    const physicalMembers = itf?.details?.physicalMembers;
+    const membersSummary = itf?.details?.membersSummary;
 
     const showName = !!rawName && rawName !== lagId; // não repetir lag-14 como nome
 
     const tone = label === 'LOCAL' ? 'blue' : 'purple';
 
+    // Cliente identificado na interface remota
+    const customerName = label === 'REMOTA' ? result?.neighbor_customer_name : null;
+    const interfaceDescription = label === 'REMOTA' ? result?.neighbor_interface_description : itf?.description;
+
     return (
-      <div className={`text-xs ${label === 'LOCAL' ? 'text-blue-600 bg-blue-50 border-blue-200' : 'text-purple-600 bg-purple-50 border-purple-200'} px-2 py-1 rounded border inline-flex flex-wrap items-center gap-1`}>
-        <i className="fas fa-ethernet" />
-        <span className="font-medium">{label}:</span>
-        {lagId && <span className="ml-1"><Chip tone="purple">{lagId}</Chip></span>}
-        {capacity && <span className="ml-1"><Chip tone={tone as any}>{capacity}</Chip></span>}
-        {showName && (
-          <span className="ml-1 inline-flex items-center gap-1 text-slate-700">
-            <i className="fas fa-link" /> {rawName}
-          </span>
+      <div className={`text-xs ${label === 'LOCAL' ? 'text-blue-600 bg-blue-50 border-blue-200' : 'text-purple-600 bg-purple-50 border-purple-200'} px-2 py-1 rounded border`}>
+        <div className="flex flex-wrap items-center gap-1">
+          <i className="fas fa-ethernet" />
+          <span className="font-medium">{label}:</span>
+          {lagId && <span className="ml-1"><Chip tone="purple">{lagId}</Chip></span>}
+          {capacity && <span className="ml-1"><Chip tone={tone as any}>{capacity}</Chip></span>}
+          {showName && (
+            <span className="ml-1 inline-flex items-center gap-1 text-slate-700">
+              <i className="fas fa-link" /> {rawName}
+            </span>
+          )}
+          {customerName && customerName !== 'N/A' && (
+            <span className="ml-1"><Chip tone="green">{customerName}</Chip></span>
+          )}
+        </div>
+
+        {/* Exibir membros das LAGs com detalhes */}
+        {physicalMembers && physicalMembers.length > 0 && (
+          <div className="mt-1 text-xs text-slate-600 border-t border-slate-300 pt-1">
+            <span className="font-medium">Membros Físicos:</span>
+            <div className="flex flex-wrap gap-1 mt-1">
+              {physicalMembers.map((member: any, idx: number) => (
+                <div key={idx} className="bg-white border border-slate-200 rounded px-1 py-0.5">
+                  <span className="font-mono text-xs">{member.interface}</span>
+                  <span className="text-slate-500"> ({member.speed})</span>
+                  {member.customer && member.customer !== 'N/A' && (
+                    <span className="ml-1 text-green-600">→ {member.customer}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
         )}
-        {members.length > 0 && (
-          <span className="ml-2 text-slate-600">• membros: {members.join(', ')}</span>
+
+        {/* Fallback para membros simples (formato antigo) */}
+        {!physicalMembers && members.length > 0 && (
+          <div className="mt-1 text-xs text-slate-600 border-t border-slate-300 pt-1">
+            <span className="font-medium">Membros:</span> {members.join(', ')}
+          </div>
         )}
+
+        {/* Descrição da interface remota */}
+        {interfaceDescription && interfaceDescription !== 'Interface remota' && (
+          <div className="mt-1 text-xs text-slate-500 border-t border-slate-300 pt-1">
+            <span className="font-medium">Descrição:</span> {interfaceDescription}
+          </div>
+        )}
+
+        {/* Nota adicional do sistema */}
         {itf?.details?.note && (
-          <span className="ml-2 text-slate-500">• {itf.details.note}</span>
+          <div className="mt-1 text-xs text-slate-500 border-t border-slate-300 pt-1">
+            <span className="font-medium">Detalhes:</span> {itf.details.note}
+          </div>
+        )}
+
+        {/* Resumo dos membros (formato de string) */}
+        {membersSummary && (
+          <div className="mt-1 text-xs text-slate-500 border-t border-slate-300 pt-1">
+            <span className="font-medium">Resumo:</span> {membersSummary}
+          </div>
         )}
       </div>
     );
@@ -301,12 +355,12 @@ const MplsSearchSystem: React.FC = () => {
                               <div className="text-sm font-medium text-slate-600 border-b border-slate-300 pb-1">
                                 Interfaces
                               </div>
-                              <InterfaceBlock label="LOCAL" itf={di.localInterface} fallbackLag={result?.access_interface} />
-                              <InterfaceBlock label="REMOTA" itf={di.remoteInterface} />
+                              <InterfaceBlock label="LOCAL" itf={di.localInterface} fallbackLag={result?.access_interface} result={result} />
+                              <InterfaceBlock label="REMOTA" itf={di.remoteInterface} result={result} />
                               {!di.localInterface && !di.remoteInterface && (
                                 <>
-                                  <InterfaceBlock label="LOCAL" itf={di.sideAInterface} fallbackLag={result?.access_interface} />
-                                  <InterfaceBlock label="REMOTA" itf={di.sideBInterface} />
+                                  <InterfaceBlock label="LOCAL" itf={di.sideAInterface} fallbackLag={result?.access_interface} result={result} />
+                                  <InterfaceBlock label="REMOTA" itf={di.sideBInterface} result={result} />
                                 </>
                               )}
                             </div>
