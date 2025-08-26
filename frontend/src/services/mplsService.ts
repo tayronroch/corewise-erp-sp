@@ -198,6 +198,13 @@ class MplsService {
         return this.searchByEquipment(query);
       }
 
+      // Detectar se a query parece ser nome de cliente
+      const customerPattern = /(TECNET|MEGALINK|VILARNET|NETPAC|HIITECH|JRNET|TECHFIBRA|CONNECT|DIGITALNET|ACCORD|HENRIQUE|MULTLINK|INFOWEB|ULTRANET|ORLATELECOM)/i;
+      if (customerPattern.test(query) || query.length > 3) {
+        console.log('🏢 MPLS SERVICE - Query detectada como cliente, usando searchByCustomerName:', query);
+        return this.searchByCustomerName(query);
+      }
+
       // Usar o endpoint de relatório de cliente que retorna todos os resultados
       // O endpoint /search/ tem bug de paginação (sempre retorna os mesmos 10 resultados)
       console.log('🔄 MPLS SERVICE - Usando endpoint de relatório para busca completa...');
@@ -544,6 +551,270 @@ class MplsService {
       console.error('❌ MPLS SERVICE - Erro na nova implementação, usando fallback:', error);
       return this.searchByEquipmentLegacy(equipmentName);
     }
+  }
+
+  /**
+   * Busca por nome de cliente e retorna equipamentos de origem e destino
+   * OTIMIZADA: Busca equipamentos únicos com cache e vincula interfaces corretamente
+   */
+  async searchByCustomerName(customerName: string): Promise<SearchResult[]> {
+    try {
+      console.log('🏢 MPLS SERVICE - Buscando por cliente:', customerName);
+
+      // 1. Buscar VPNs relacionadas ao cliente via endpoint de relatório
+      const response = await this.request<any>('/reports/customers/', {
+        params: { customer: customerName }
+      });
+
+      if (!response || !response.results || response.results.length === 0) {
+        console.log('❌ MPLS SERVICE - Nenhuma VPN encontrada para o cliente:', customerName);
+        return [];
+      }
+
+      console.log('✅ MPLS SERVICE - VPNs encontradas para o cliente:', response.results.length);
+
+      // 2. Extrair lista de equipamentos únicos envolvidos nas VPNs do cliente
+      const uniqueEquipments = new Set<string>();
+      response.results.forEach((vpn: any) => {
+        if (vpn.side_a?.equipment?.hostname) uniqueEquipments.add(vpn.side_a.equipment.hostname);
+        if (vpn.side_b?.equipment?.hostname) uniqueEquipments.add(vpn.side_b.equipment.hostname);
+      });
+
+      console.log('🎯 MPLS SERVICE - Equipamentos únicos identificados:', uniqueEquipments.size, Array.from(uniqueEquipments));
+
+      // 3. Buscar dados detalhados dos equipamentos únicos (com controle de rate limiting)
+      const equipmentDataCache: { [key: string]: any } = {};
+      const equipmentPromises = Array.from(uniqueEquipments).map(async (equipmentName, index) => {
+        // Adicionar delay progressivo para evitar rate limiting
+        await new Promise(resolve => setTimeout(resolve, index * 100)); // 100ms entre requests
+        
+        try {
+          const data = await this.searchEquipmentByName(equipmentName);
+          equipmentDataCache[equipmentName] = data;
+          console.log(`✅ MPLS SERVICE - Dados carregados para ${equipmentName}`);
+          return data;
+        } catch (error) {
+          console.error(`❌ MPLS SERVICE - Erro ao buscar ${equipmentName}:`, error);
+          equipmentDataCache[equipmentName] = { localEquipment: null, remoteConnections: [] };
+          return null;
+        }
+      });
+
+      // Aguardar todas as requisições com timeout
+      await Promise.allSettled(equipmentPromises);
+
+      // 4. Processar VPNs usando dados dos equipamentos carregados
+      const convertedResults: SearchResult[] = [];
+      const processedVpns = new Set<number>();
+
+      response.results.forEach((vpn: any, index: number) => {
+        if (processedVpns.has(vpn.vpn_id)) {
+          return;
+        }
+        processedVpns.add(vpn.vpn_id);
+
+        // Processar lado A -> lado B
+        if (vpn.side_a?.equipment?.hostname && equipmentDataCache[vpn.side_a.equipment.hostname]) {
+          const equipmentData = equipmentDataCache[vpn.side_a.equipment.hostname];
+          
+          if (equipmentData.localEquipment) {
+            // Encontrar a conexão específica desta VPN
+            const relevantConnection = equipmentData.remoteConnections.find((conn: any) => 
+              conn.vpnId === vpn.vpn_id || 
+              (conn.remoteEquipment === vpn.side_b?.equipment?.hostname && 
+               conn.localInterface === vpn.side_a?.access_interface)
+            );
+
+            if (relevantConnection) {
+              const result = this.buildSearchResultForCustomer(
+                equipmentData, 
+                relevantConnection, 
+                customerName,
+                convertedResults.length
+              );
+              convertedResults.push(result);
+            }
+          }
+        }
+
+        // Processar lado B -> lado A
+        if (vpn.side_b?.equipment?.hostname && equipmentDataCache[vpn.side_b.equipment.hostname]) {
+          const equipmentData = equipmentDataCache[vpn.side_b.equipment.hostname];
+          
+          if (equipmentData.localEquipment) {
+            // Encontrar a conexão específica desta VPN
+            const relevantConnection = equipmentData.remoteConnections.find((conn: any) => 
+              conn.vpnId === vpn.vpn_id || 
+              (conn.remoteEquipment === vpn.side_a?.equipment?.hostname && 
+               conn.localInterface === vpn.side_b?.access_interface)
+            );
+
+            if (relevantConnection) {
+              const result = this.buildSearchResultForCustomer(
+                equipmentData, 
+                relevantConnection, 
+                customerName,
+                convertedResults.length
+              );
+              convertedResults.push(result);
+            }
+          }
+        }
+      });
+
+      console.log('🎯 MPLS SERVICE - Total de conexões processadas para o cliente:', convertedResults.length);
+      return convertedResults;
+
+    } catch (error) {
+      console.error('❌ MPLS SERVICE - Erro na busca por cliente:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Constrói um SearchResult a partir dos dados do equipamento e conexão para busca por cliente
+   * Mesma lógica da busca por equipamento, mas adaptada para o contexto de cliente
+   */
+  private buildSearchResultForCustomer(
+    equipmentData: any, 
+    connection: any, 
+    customerName: string,
+    index: number
+  ): SearchResult {
+    // Encontrar interface local usando a mesma lógica da busca por equipamento
+    const localInterface = equipmentData.localEquipment.interfaces.find((intf: any) => 
+      intf.name === connection.localInterface
+    );
+
+    // Extrair cliente da descrição da interface se necessário (mesma lógica)
+    let finalCustomerName = customerName;
+    if (!finalCustomerName || finalCustomerName === 'N/A') {
+      if (localInterface?.type === 'lag' && localInterface?.lagMemberDetails) {
+        const customerMember = localInterface.lagMemberDetails.find((member: any) =>
+          member.description && member.description.toUpperCase().startsWith('CUSTOMER-')
+        );
+        if (customerMember) {
+          finalCustomerName = this.extractClientFromDescription(customerMember.description) || customerName;
+        }
+      } else if (localInterface?.description) {
+        finalCustomerName = this.extractClientFromDescription(localInterface.description) || customerName;
+      }
+    }
+
+    // Retornar SearchResult com a mesma estrutura da busca por equipamento
+    return {
+      id: index,
+      equipment_name: equipmentData.localEquipment.equipment.hostname,
+      equipment_location: equipmentData.localEquipment.equipment.location || '',
+      backup_date: new Date().toISOString().split('T')[0],
+      raw_config: '',
+      vpn_id: connection.vpnId,
+      loopback_ip: equipmentData.localEquipment.equipment.loopbackIp,
+      neighbor_ip: connection.remoteIp,
+      neighbor_hostname: connection.remoteEquipment,
+      access_interface: connection.localInterface,
+      encapsulation: connection.encapsulation,
+      description: localInterface?.description || '',
+      group_name: connection.remoteEquipment,
+      customers: [finalCustomerName],
+      highlights: [],
+      vpws_groups: [{
+        id: connection.vpnId,
+        name: `VPN ${connection.vpnId}`,
+        vpns: [{
+          id: connection.vpnId,
+          vpn_id: connection.vpnId,
+          name: `VPN ${connection.vpnId}`
+        }]
+      }],
+      customer_services: [{
+        id: index,
+        customer_name: finalCustomerName,
+        service_type: 'VPN'
+      }],
+      // Informações detalhadas dos dois lados (mesma estrutura da busca por equipamento)
+      side_a_info: {
+        hostname: equipmentData.localEquipment.equipment.hostname,
+        location: equipmentData.localEquipment.equipment.location || '',
+        loopback_ip: equipmentData.localEquipment.equipment.loopbackIp,
+        access_interface: connection.localInterface,
+        interface_details: localInterface || {}
+      },
+      side_b_info: {
+        hostname: connection.remoteEquipment,
+        location: '',
+        loopback_ip: connection.remoteIp,
+        access_interface: connection.remoteInterface || 'N/A',
+        interface_details: connection.remoteInterfaceFullData || {}
+      },
+      destination_info: {
+        hostname: connection.remoteEquipment,
+        ip: connection.remoteIp,
+        isInDatabase: true,
+        neighborIp: connection.remoteIp,
+        vpwsGroup: null,
+        localInterface: {
+          name: connection.localInterface,
+          details: {
+            ...localInterface || {},
+            // LAG members details (igual à busca por equipamento)
+            physicalMembers: localInterface?.type === 'lag' && localInterface?.lagMemberDetails ? 
+              localInterface.lagMemberDetails.map((member: any) => ({
+                interface: member.name,
+                speed: member.speed,
+                description: member.description,
+                customer: this.extractClientFromDescription(member.description) || 'N/A'
+              })) : 
+              undefined,
+            membersSummary: localInterface?.type === 'lag' && localInterface?.lagMemberDetails ?
+              `Membros: ${localInterface.lagMemberDetails.map((m: any) => 
+                `${m.name}(${m.speed}): ${this.extractClientFromDescription(m.description) || 'N/A'}`
+              ).join(', ')}` :
+              undefined
+          },
+          capacity: localInterface?.speed || 'N/A',
+          media: localInterface?.type === 'lag' ? 'lag' : 'physical',
+          description: localInterface?.description || ''
+        },
+        remoteInterface: {
+          name: connection.remoteInterface || 'N/A',
+          details: {
+            ...connection.remoteInterfaceFullData || {},
+            // Remote LAG members details
+            physicalMembers: connection.remoteInterfaceFullData?.type === 'lag' && connection.remoteInterfaceFullData?.lagMemberDetails ? 
+              connection.remoteInterfaceFullData.lagMemberDetails.map((member: any) => ({
+                interface: member.name,
+                speed: member.speed,
+                description: member.description,
+                customer: this.extractClientFromDescription(member.description) || 'N/A'
+              })) : 
+              undefined,
+            membersSummary: connection.remoteInterfaceFullData?.type === 'lag' && connection.remoteInterfaceFullData?.lagMemberDetails ?
+              `Membros Remotos: ${connection.remoteInterfaceFullData.lagMemberDetails.map((m: any) => 
+                `${m.name}(${m.speed}): ${this.extractClientFromDescription(m.description) || 'N/A'}`
+              ).join(', ')}` :
+              undefined
+          },
+          capacity: this.calculateTotalInterfaceCapacity(connection.remoteInterfaceFullData) || 'N/A',
+          media: connection.remoteInterfaceFullData?.type === 'lag' ? 'lag' : 'physical',
+          description: connection.remoteInterfaceDetails || 'Interface remota'
+        }
+      },
+      // Campos adicionais para compatibilidade (mesma estrutura)
+      interface_lag_members: localInterface?.lagMembers || [],
+      interface_note: localInterface?.type === 'lag' && localInterface?.lagMemberDetails ?
+        `LAG com ${localInterface.lagMemberDetails.length} membros: ${localInterface.lagMemberDetails.map((m: any) => 
+          `${m.name}(${m.speed})`
+        ).join(', ')}` : '',
+      interface_description: localInterface?.description || '',
+      interface_found_in_db: true,
+      neighbor_interface_description: connection.remoteInterfaceDetails || 'Interface remota',
+      neighbor_interface_found_in_db: connection.remoteInterface !== 'N/A',
+      opposite_interface: connection.remoteInterface || 'N/A',
+      vlan_id: connection.encapsulation?.split(':')[1]?.split(',')[0] || '',
+      pw_type: 'vlan',
+      customer_name: finalCustomerName
+    };
   }
 
   // Implementação legada mantida como fallback
