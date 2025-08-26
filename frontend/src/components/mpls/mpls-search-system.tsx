@@ -2,10 +2,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { mplsService, type SearchResult } from '../../services/mplsService';
 
-interface SearchFilters { query: string; equipment: string; location: string; service_type: string; }
+interface SearchFilters { query: string; equipment: string; service_type: string; }
 
 const MplsSearchSystem: React.FC = () => {
-  const [filters, setFilters] = useState<SearchFilters>({ query: '', equipment: '', location: '', service_type: '' });
+  const [filters, setFilters] = useState<SearchFilters>({ query: '', equipment: '', service_type: '' });
   const [results, setResults] = useState<SearchResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [suggestions, setSuggestions] = useState<string[]>([]);
@@ -170,12 +170,6 @@ const MplsSearchSystem: React.FC = () => {
           </div>
         )}
 
-        {/* Resumo dos membros (formato de string) */}
-        {membersSummary && (
-          <div className="mt-1 text-xs text-slate-500 border-t border-slate-300 pt-1">
-            <span className="font-medium">Resumo:</span> {membersSummary}
-          </div>
-        )}
       </div>
     );
   };
@@ -195,7 +189,7 @@ const MplsSearchSystem: React.FC = () => {
               <div className="space-y-1">
                 <label htmlFor="query" className="text-sm font-medium text-slate-800">Busca Geral</label>
                 <div className="relative">
-                  <input id="query" value={filters.query} onChange={(e) => setFilters(p => ({ ...p, query: e.target.value }))} placeholder="Ex: VELOCINET, 3502, lag-11" className="w-full border border-slate-300 rounded-md px-3 py-2 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-blue-600" />
+                  <input id="query" value={filters.query} onChange={(e) => setFilters(p => ({ ...p, query: e.target.value }))} placeholder="Ex: VELOCINET, 3502" className="w-full border border-slate-300 rounded-md px-3 py-2 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-blue-600" />
                   {showSuggestions && suggestions.length > 0 && (
                     <div className="absolute z-10 mt-1 w-full bg-white border border-slate-200 rounded-md shadow">
                       {suggestions.map((s, i) => (
@@ -208,28 +202,22 @@ const MplsSearchSystem: React.FC = () => {
               </div>
               <div className="space-y-1">
                 <label htmlFor="equipment" className="text-sm font-medium text-slate-800">Equipamento</label>
-                <input id="equipment" value={filters.equipment} onChange={(e) => setFilters(p => ({ ...p, equipment: e.target.value }))} placeholder="Ex: PI-TERESINA" className="w-full border border-slate-300 rounded-md px-3 py-2 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-blue-600" />
+                <input id="equipment" value={filters.equipment} onChange={(e) => setFilters(p => ({ ...p, equipment: e.target.value }))} placeholder="Ex: PI-TERESINA-PICARRA-PE02" className="w-full border border-slate-300 rounded-md px-3 py-2 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-blue-600" />
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-1">
-                <label htmlFor="location" className="text-sm font-medium text-slate-800">Localização</label>
-                <input id="location" value={filters.location} onChange={(e) => setFilters(p => ({ ...p, location: e.target.value }))} placeholder="Ex: PI-TERESINA" className="w-full border border-slate-300 rounded-md px-3 py-2 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-blue-600" />
-              </div>
-              <div className="space-y-1">
-                <label htmlFor="service_type" className="text-sm font-medium text-slate-800">Tipo de Serviço</label>
-                <select id="service_type" value={filters.service_type} onChange={(e) => setFilters(p => ({ ...p, service_type: e.target.value }))} className="w-full border border-slate-300 rounded-md px-3 py-2 text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-blue-600">
-                  <option value="">Todos</option>
-                  {['data', 'voice', 'video', 'internet', 'vpn', 'metro', 'backbone'].map(o => <option key={o} value={o}>{o.charAt(0).toUpperCase() + o.slice(1)}</option>)}
-                </select>
-              </div>
+            <div className="space-y-1">
+              <label htmlFor="service_type" className="text-sm font-medium text-slate-800">Tipo de Serviço</label>
+              <select id="service_type" value={filters.service_type} onChange={(e) => setFilters(p => ({ ...p, service_type: e.target.value }))} className="w-full border border-slate-300 rounded-md px-3 py-2 text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-600 focus:border-blue-600">
+                <option value="">Todos</option>
+                {['data', 'voice', 'video', 'internet', 'vpn', 'metro', 'backbone'].map(o => <option key={o} value={o}>{o.charAt(0).toUpperCase() + o.slice(1)}</option>)}
+              </select>
             </div>
 
             <div className="flex flex-col md:flex-row items-start md:items-center gap-3 justify-between">
               <button type="submit" className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50" disabled={isLoading}><i className="fas fa-search" />{isLoading ? 'Buscando...' : 'Buscar'}</button>
               <div className="flex items-center gap-2">
-                <button type="button" className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-slate-200 text-slate-800 hover:bg-slate-300" onClick={() => { setFilters({ query: '', equipment: '', location: '', service_type: '' }); setResults([]); setCurrentPage(1); }}> <i className="fas fa-times" />Limpar Filtros</button>
+                <button type="button" className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-slate-200 text-slate-800 hover:bg-slate-300" onClick={() => { setFilters({ query: '', equipment: '', service_type: '' }); setResults([]); setCurrentPage(1); }}> <i className="fas fa-times" />Limpar Filtros</button>
               </div>
             </div>
           </form>
@@ -383,10 +371,7 @@ const MplsSearchSystem: React.FC = () => {
           <ul className="list-disc pl-6 mt-2 space-y-1">
             <li>Digite o nome do cliente (ex: VELOCINET, DIGITALNET, ULTRANET)</li>
             <li>Busque por VPN ID numérica (ex: 3502, 3651, 634)</li>
-            <li>Procure por interface (ex: lag-11, ten-gigabit-ethernet-1/1/4)</li>
-            <li>Busque por tipo de encapsulamento (ex: qinq, vlan)</li>
-            <li>Use filtros de equipamento para refinar a busca</li>
-            <li>Busque por localização (ex: PI-TERESINA, MA-TIMON)</li>
+            <li>Procure por Nome do Host (ex: MA-BREJO-PE01)</li>
           </ul>
         </div>
       )}

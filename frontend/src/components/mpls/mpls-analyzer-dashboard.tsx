@@ -13,9 +13,9 @@ const TabButton: React.FC<{active:boolean; onClick:()=>void; children:React.Reac
   <button
     onClick={onClick}
     className={[
-      'px-4 py-2 text-sm font-medium rounded-md transition',
+      'px-4 py-2 text-sm font-medium rounded-md transition-all duration-200',
       active
-        ? 'bg-slate-900 text-white shadow'
+        ? 'bg-blue-200 text-blue-900 border-2 border-blue-400 shadow-md'
         : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'
     ].join(' ')}
   >
@@ -32,14 +32,14 @@ const MplsAnalyzerDashboard: React.FC<MplsAnalyzerDashboardProps> = ({ onBack })
         <div className="max-w-7xl mx-auto px-4 py-6 flex items-center justify-between">
           <div>
             <h1 className="text-3xl font-bold tracking-tight">MPLS Analyzer</h1>
-            <p className="text-slate-600">Sistema de análise, busca e relatórios de equipamentos MPLS</p>
+            <p className="text-slate-600">Modulo de análise, busca e relatórios de Clientes</p>
           </div>
           {onBack && (
             <button
               onClick={onBack}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
             >
-              <span>←</span> Voltar ao Sistema
+              <span>←</span> Voltar
             </button>
           )}
         </div>
@@ -47,8 +47,8 @@ const MplsAnalyzerDashboard: React.FC<MplsAnalyzerDashboardProps> = ({ onBack })
 
       <main className="max-w-7xl mx-auto px-4 py-6">
         <div className="flex items-center gap-2 mb-4">
-          <TabButton active={activeTab==='search'} onClick={()=>setActiveTab('search')}>🔎 Busca Inteligente</TabButton>
-          <TabButton active={activeTab==='reports'} onClick={()=>setActiveTab('reports')}>📊 Relatórios de Cliente</TabButton>
+          <TabButton active={activeTab==='search'} onClick={()=>setActiveTab('search')}>Busca Inteligente</TabButton>
+          <TabButton active={activeTab==='reports'} onClick={()=>setActiveTab('reports')}>Relatórios de Cliente</TabButton>
         </div>
 
         <section className="bg-white border border-slate-200 rounded-xl shadow-sm p-5">

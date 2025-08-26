@@ -2202,7 +2202,7 @@ class MplsService {
       
       // Se não tem descrição na LAG ou não é de cliente, buscar nas interfaces membros
       if (!lagDescription || !lagDescription.includes('CUSTOMER-')) {
-        const customerMember = memberDetails.find(member => 
+        const customerMember = memberDetails.find((member: any) => 
           member.description && member.description.toUpperCase().startsWith('CUSTOMER-')
         );
         
@@ -2214,7 +2214,7 @@ class MplsService {
       }
 
       // Verificar se é interface de cliente baseado nas descrições dos membros
-      const isCustomerInterface = memberDetails.some(member => 
+      const isCustomerInterface = memberDetails.some((member: any) => 
         member.description && member.description.toUpperCase().startsWith('CUSTOMER-')
       ) || this.isCustomerLagDescription(lagDescription);
       
@@ -2232,7 +2232,7 @@ class MplsService {
       });
 
       console.log(`🔗 LAG ${lagId}: ${lagDescription} (${speed}) - Cliente: ${isCustomerInterface}`);
-      console.log(`   Membros: ${memberDetails.map(m => `${m.name}(${m.speed})`).join(', ')}`);
+      console.log(`   Membros: ${memberDetails.map((m: any) => `${m.name}(${m.speed})`).join(', ')}`);
       if (clientDescription && clientDescription !== lagDescription) {
         console.log(`   Descrição do cliente: ${clientDescription}`);
       }
@@ -2787,13 +2787,13 @@ class MplsService {
           conn.remoteEquipment === equipmentB
         );
 
-        const connectionsBtoA = dataB.remoteConnections.filter(conn => 
+        const connectionsBtoA = dataB.remoteConnections.filter((conn: any) => 
           conn.remoteEquipment === equipmentA
         );
 
         // 4. Correlacionar VPNs bidirecionais
         connections = connectionsAtoB.map(connA => {
-          const connB = connectionsBtoA.find(cb => cb.vpnId === connA.vpnId);
+          const connB = connectionsBtoA.find((cb: any) => cb.vpnId === connA.vpnId);
           
           // Encontrar interfaces locais
           const interfaceA = dataA.localEquipment.interfaces.find((intf: any) => 
