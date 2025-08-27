@@ -13,12 +13,14 @@ import {
   type Edge,
   type Connection,
 } from 'reactflow';
+import L2VPNConfiguration from '../networking/l2vpn-configuration';
 import {
   Box,
   Card,
   Typography,
   IconButton,
   Drawer,
+  Button,
   List,
   ListItem,
   ListItemText,
@@ -150,6 +152,9 @@ export default function NetworkTopology({ onBack }: NetworkTopologyProps) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selectedNode, setSelectedNode] = useState<TopologyNode | null>(null);
+  const [showL2VPNConfig, setShowL2VPNConfig] = useState(false);
+  const [showNetworkingPanel, setShowNetworkingPanel] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [topologyData, setTopologyData] = useState<TopologyData | null>(null);
 
@@ -294,6 +299,14 @@ export default function NetworkTopology({ onBack }: NetworkTopologyProps) {
     [setEdges]
   );
 
+  const onNodeClick = useCallback((_: React.MouseEvent, node: Node) => {
+    const nodeData = topologyData?.nodes.find(n => n.id === node.id);
+    if (nodeData) {
+      setSelectedNode(nodeData);
+      setShowNetworkingPanel(true);
+    }
+  }, [topologyData]);
+
   return (
     <Box sx={{
       height: '100vh',
@@ -352,6 +365,7 @@ export default function NetworkTopology({ onBack }: NetworkTopologyProps) {
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
+        onNodeClick={onNodeClick}
         nodeTypes={nodeTypes}
         fitView
         attributionPosition="bottom-left"
@@ -434,6 +448,83 @@ export default function NetworkTopology({ onBack }: NetworkTopologyProps) {
           </Box>
         </Card>
       </Box>
+
+      {/* Networking Panel Drawer */}
+      <Drawer
+        anchor="right"
+        open={showNetworkingPanel}
+        onClose={() => setShowNetworkingPanel(false)}
+        sx={{
+          '& .MuiDrawer-paper': {
+            width: '350px',
+            bgcolor: '#1e1e1e',
+            color: 'white',
+            padding: '16px',
+          },
+        }}
+      >
+        {selectedNode && (
+          <Box>
+            <Typography variant="h6" sx={{ mb: 2, color: '#4fc3f7' }}>
+              {selectedNode.label}
+            </Typography>
+            <Typography variant="body2" sx={{ mb: 2, color: '#ccc' }}>
+              IP: {selectedNode.ip || 'N/A'}
+            </Typography>
+            <Typography variant="body2" sx={{ mb: 3, color: '#ccc' }}>
+              Status: {selectedNode.status}
+            </Typography>
+
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+              <Button
+                fullWidth
+                variant="contained"
+                sx={{ bgcolor: '#4caf50', '&:hover': { bgcolor: '#388e3c' } }}
+                onClick={() => {
+                  // Implementar OSPF
+                  console.log('OSPF para:', selectedNode.id);
+                }}
+              >
+                OSPF Configuration
+              </Button>
+              
+              <Button
+                fullWidth
+                variant="contained"
+                sx={{ bgcolor: '#ff9800', '&:hover': { bgcolor: '#f57c00' } }}
+                onClick={() => {
+                  // Implementar MPLS TE
+                  console.log('MPLS TE para:', selectedNode.id);
+                }}
+              >
+                MPLS TE
+              </Button>
+              
+              <Button
+                fullWidth
+                variant="contained"
+                sx={{ bgcolor: '#2196f3', '&:hover': { bgcolor: '#1976d2' } }}
+                onClick={() => {
+                  setShowL2VPNConfig(true);
+                  setShowNetworkingPanel(false);
+                }}
+              >
+                L2VPN Configuration
+              </Button>
+            </Box>
+          </Box>
+        )}
+      </Drawer>
+
+      {/* L2VPN Configuration Integration */}
+      {showL2VPNConfig && (
+        <L2VPNConfiguration
+          leftDrawerOpen={false}
+          rightDrawerOpen={true}
+          onClose={() => setShowL2VPNConfig(false)}
+        />
+      )}
+
     </Box>
   );
 }

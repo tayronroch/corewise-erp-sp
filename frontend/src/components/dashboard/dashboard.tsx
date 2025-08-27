@@ -117,16 +117,9 @@ const modules = [
     icon: <Assessment sx={{ fontSize: 40, color: 'white' }} />,
   },
   {
-    id: 'easymaps',
-    title: 'CoreWiseMaps',
-    description: 'Mapas de rede',
-    accent: ['#ff5722', '#f44336'],
-    icon: <MapIcon sx={{ fontSize: 40, color: 'white' }} />,
-  },
-  {
     id: 'mapmanager',
     title: 'Gerenciador de Mapas',
-    description: 'Gerenciar topologias geográficas',
+    description: 'Mapas de rede e topologias geográficas',
     accent: ['#3f51b5', '#2196f3'],
     icon: <MapIcon sx={{ fontSize: 40, color: 'white' }} />,
   },
@@ -136,6 +129,13 @@ const modules = [
     description: 'Criar topologias de rede no mapa',
     accent: ['#673ab7', '#9c27b0'],
     icon: <Storage sx={{ fontSize: 40, color: 'white' }} />,
+  },
+  {
+    id: 'networktopology',
+    title: 'Topologia de Rede',
+    description: 'Diagramas com OSPF, MPLS TE e L2VPN',
+    accent: ['#4caf50', '#388e3c'],
+    icon: <Timeline sx={{ fontSize: 40, color: 'white' }} />,
   },
   {
     id: 'easylog',

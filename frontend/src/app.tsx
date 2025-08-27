@@ -3,7 +3,6 @@ import { ThemeProvider, createTheme } from '@mui/material/styles';
 import { CssBaseline } from '@mui/material';
 import Login from './components/auth/login';
 import Dashboard from './components/dashboard/dashboard';
-import CoreWiseMaps from './components/topology/corewisemaps';
 import MapManager from './components/topology/mapmanager';
 import NetworkTopology from './components/topology/networktopology';
 import TopologyManager from './components/topology/topology-manager';
@@ -72,7 +71,7 @@ export default function App() {
   const renderCurrentModule = () => {
     switch (currentModule) {
       case 'easymaps':
-        return <CoreWiseMaps onBack={() => setCurrentModule('dashboard')} />;
+        return <MapManager onBack={() => setCurrentModule('dashboard')} />;
       case 'mapmanager':
         return <MapManager onBack={() => setCurrentModule('dashboard')} />;
       case 'topology-manager':
