@@ -64,30 +64,39 @@ class TokenManager {
   private static async _performRefresh(): Promise<void> {
     const refreshToken = localStorage.getItem('refresh_token');
     if (!refreshToken) {
+      console.log('❌ Nenhum refresh token encontrado');
       this.logout();
       return;
     }
 
     try {
-      console.log('Renovando token de acesso...');
+      console.log('🔄 Renovando token de acesso...');
+      console.log('🔑 Refresh token usado:', refreshToken.substring(0, 20) + '...');
       
       const response = await axios.post(buildApiUrl(API_CONFIG.ENDPOINTS.AUTH.REFRESH), {
         refresh: refreshToken
       });
 
-      const { access } = response.data;
+      const { access, refresh: newRefresh } = response.data;
       
-      // Salvar novo token
+      // Salvar novo access token
       localStorage.setItem('access_token', access);
       api.defaults.headers.common['Authorization'] = `Bearer ${access}`;
       
-      console.log('Token renovado com sucesso');
+      // ⚠️ IMPORTANTE: Se o backend retornar um novo refresh token, atualizá-lo
+      if (newRefresh && newRefresh !== refreshToken) {
+        console.log('🔄 Atualizando refresh token...');
+        localStorage.setItem('refresh_token', newRefresh);
+      }
+      
+      console.log('✅ Token renovado com sucesso');
       
       // Programar próxima verificação
       this.scheduleNextRefresh(access);
       
     } catch (error) {
       console.error('❌ Erro ao renovar token:', error);
+      console.log('🔑 Refresh token que falhou:', refreshToken.substring(0, 20) + '...');
       this.logout();
     }
   }
