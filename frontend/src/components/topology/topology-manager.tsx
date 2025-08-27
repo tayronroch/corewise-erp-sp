@@ -34,6 +34,7 @@ import {
   Paper,
   CircularProgress,
   Menu,
+  Alert,
   ListItemButton,
   Divider,
   Tabs,
@@ -350,6 +351,8 @@ export const TopologyManager: React.FC<TopologyManagerProps> = ({ onBack }) => {
   const [viewMode, setViewMode] = useState<'map' | 'diagram'>('map');
   const [showConnections, setShowConnections] = useState(true);
   const [routesLoading, setRoutesLoading] = useState(false);
+  const [routeCalculateMode, setRouteCalculateMode] = useState(false);
+  const [selectedConnectionForCalculation, setSelectedConnectionForCalculation] = useState<string | null>(null);
   
   // Painel lateral de edição de conexão (interfaces, ações)
   const [connectionPanelOpen, setConnectionPanelOpen] = useState(false);
@@ -1319,6 +1322,63 @@ export const TopologyManager: React.FC<TopologyManagerProps> = ({ onBack }) => {
     }
   }, [project, calculatePathDistance, saveProjectToStorage]);
 
+  // Calculate specific connection route
+  const calculateSelectedConnection = useCallback(async (connectionId: string) => {
+    if (!project) return;
+    
+    setRoutesLoading(true);
+    
+    try {
+      const connection = project.connections.find(c => c.id === connectionId);
+      if (!connection) {
+        console.error('Conexão não encontrada:', connectionId);
+        return;
+      }
+
+      const sourceNode = project.nodes.find(n => n.id === connection.sourceId);
+      const targetNode = project.nodes.find(n => n.id === connection.targetId);
+      
+      if (!sourceNode || !targetNode) {
+        console.error('Nós não encontrados para a conexão:', connectionId);
+        return;
+      }
+      
+      const routeRequest = {
+        id: connection.id,
+        start: [sourceNode.position.latitude, sourceNode.position.longitude] as [number, number],
+        end: [targetNode.position.latitude, targetNode.position.longitude] as [number, number],
+      };
+
+      const calculatedRoutes = await calculateMultipleRoutes([routeRequest]);
+      
+      if (calculatedRoutes.length > 0) {
+        const calculated = calculatedRoutes[0];
+        if (calculated.path.length > 2) {
+          const updatedConnections = project.connections.map(c => 
+            c.id === connectionId ? {
+              ...c,
+              path: calculated.path,
+              isCalculated: true,
+              distance: calculatePathDistance(calculated.path)
+            } : c
+          );
+
+          const updatedProject = { ...project, connections: updatedConnections };
+          setProject(updatedProject);
+          console.log(`🔄 Auto-salvando projeto após cálculo da conexão ${connectionId}`);
+          await saveProjectToStorage(updatedProject);
+        }
+      }
+    } catch (error) {
+      console.error('Erro ao calcular conexão específica:', error);
+    } finally {
+      setRoutesLoading(false);
+      // Desativar modo de cálculo após calcular
+      setRouteCalculateMode(false);
+      setSelectedConnectionForCalculation(null);
+    }
+  }, [project, calculatePathDistance, saveProjectToStorage]);
+
   // Helper function to get connection points
   const getConnectionPoints = (connection: TopologyConnection): [number, number][] | null => {
     const sourceNode = project?.nodes.find(n => n.id === connection.sourceId);
@@ -1344,6 +1404,12 @@ export const TopologyManager: React.FC<TopologyManagerProps> = ({ onBack }) => {
       event.originalEvent.stopPropagation();
     }
 
+    // Se estiver no modo de cálculo individual, calcular apenas esta conexão
+    if (routeCalculateMode) {
+      calculateSelectedConnection(connection.id);
+      return;
+    }
+
     if (editMode.active && editMode.tool === 'delete') {
       // Se estiver no modo delete, excluir conexão
       deleteConnection(connection.id);
@@ -1366,7 +1432,7 @@ export const TopologyManager: React.FC<TopologyManagerProps> = ({ onBack }) => {
       setTargetInterfaceInput(current?.properties.targetInterface || '');
       setConnectionPanelOpen(true);
     }
-  }, [editMode, deleteConnection, project?.connections]);
+  }, [editMode, deleteConnection, project?.connections, routeCalculateMode, calculateSelectedConnection]);
 
   // Handle connection double click para adicionar pontos
   const handleConnectionDoubleClick = useCallback((connection: TopologyConnection, event: L.LeafletMouseEvent) => {
@@ -1562,16 +1628,29 @@ export const TopologyManager: React.FC<TopologyManagerProps> = ({ onBack }) => {
                 <Button
                   onClick={() => calculateRealRoutes(project.connections)}
                   startIcon={routesLoading ? <CircularProgress size={16} /> : <RouteIcon />}
-                  disabled={routesLoading}
+                  disabled={routesLoading || routeCalculateMode}
                   variant="contained"
                   color="success"
                   size="medium"
                 >
                   {routesLoading ? 'Calculando...' : 
                     uncalculatedRoutes.length > 0 
-                      ? `Calcular Rotas (${uncalculatedRoutes.length})`
-                      : 'Recalcular Rotas'
+                      ? `Calcular Todas (${uncalculatedRoutes.length})`
+                      : 'Recalcular Todas'
                   }
+                </Button>
+                <Button
+                  onClick={() => {
+                    setRouteCalculateMode(!routeCalculateMode);
+                    setSelectedConnectionForCalculation(null);
+                  }}
+                  startIcon={<RouteIcon />}
+                  disabled={routesLoading}
+                  variant={routeCalculateMode ? "contained" : "outlined"}
+                  color={routeCalculateMode ? "info" : "primary"}
+                  size="medium"
+                >
+                  {routeCalculateMode ? 'Sair do Modo Individual' : 'Modo Individual'}
                 </Button>
                 
                 {calculatedRoutes.length > 0 && (
@@ -1622,6 +1701,28 @@ export const TopologyManager: React.FC<TopologyManagerProps> = ({ onBack }) => {
           )}
         </Toolbar>
       </AppBar>
+
+      {/* Route calculate mode indicator */}
+      {routeCalculateMode && (
+        <Alert
+          severity="info"
+          sx={{
+            position: 'fixed',
+            top: 80,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 1300,
+            bgcolor: 'rgba(33, 150, 243, 0.95)',
+            color: 'white',
+            '& .MuiAlert-icon': { color: 'white' }
+          }}
+        >
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <RouteIcon fontSize="small" />
+            Modo de cálculo individual ativo - Clique em uma conexão para calcular sua rota
+          </Box>
+        </Alert>
+      )}
 
       {/* Projects Menu */}
       <Menu
@@ -2124,15 +2225,23 @@ export const TopologyManager: React.FC<TopologyManagerProps> = ({ onBack }) => {
                                  const hasZabbixMonitoring = connection.properties.sourceZabbixInterfaceId && connection.properties.targetZabbixInterfaceId;
                  const routeColor = isConnectionSelected
                    ? '#3b82f6'  // Azul para conexão selecionada para edição
-                   : hasZabbixMonitoring
+                   : routeCalculateMode
+                     ? '#2196f3'  // Azul para indicar que estão clicáveis no modo individual
+                     : hasZabbixMonitoring
                      ? '#4caf50'  // Verde para conexões com monitoramento Zabbix
                      : isCalculated 
                        ? '#2196F3' 
                        : connection.style.color;
                 const routeWeight = isConnectionSelected 
                   ? connection.style.width + 3
-                  : connection.style.width;
-                const routeOpacity = canEditConnection ? 0.9 : connection.style.opacity;
+                  : routeCalculateMode
+                    ? Math.max(connection.style.width + 1, 4) // Deixar mais grosso no modo de cálculo
+                    : connection.style.width;
+                const routeOpacity = canEditConnection 
+                  ? 0.9 
+                  : routeCalculateMode 
+                    ? 0.9 // Mais visível no modo de cálculo
+                    : connection.style.opacity;
 
                 return (
                   <Polyline

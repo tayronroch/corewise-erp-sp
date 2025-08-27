@@ -39,6 +39,7 @@ import {
   Route as RouteIcon,
   Edit,
   Undo,
+  TouchApp,
 } from '@mui/icons-material';
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
@@ -370,6 +371,8 @@ export default function CoreWiseMaps({ onBack }: CoreWiseMapsProps) {
   const [routesLoading, setRoutesLoading] = useState(false);
   const [editingRoute, setEditingRoute] = useState<string | null>(null);
   const [routeEditMode, setRouteEditMode] = useState(false);
+  const [routeCalculateMode, setRouteCalculateMode] = useState(false);
+  const [selectedRouteForCalculation, setSelectedRouteForCalculation] = useState<string | null>(null);
 
   // Estados para tooltips
   const [equipmentTooltip, setEquipmentTooltip] = useState<{
@@ -434,6 +437,58 @@ export default function CoreWiseMaps({ onBack }: CoreWiseMapsProps) {
       setRoutesLoading(false);
     }
   }, [equipments]);
+
+  // Função para calcular rota específica selecionada
+  const calculateSelectedRoute = useCallback(async (routeId: string) => {
+    setRoutesLoading(true);
+    
+    try {
+      const route = routes.find(r => r.id === routeId);
+      if (!route) {
+        console.error('Rota não encontrada:', routeId);
+        return;
+      }
+
+      // Encontrar coordenadas dos equipamentos
+      const fromEquip = equipments.find(eq => eq.id === route.from);
+      const toEquip = equipments.find(eq => eq.id === route.to);
+      
+      if (!fromEquip || !toEquip) {
+        console.error('Equipamentos não encontrados para a rota:', routeId);
+        return;
+      }
+      
+      const routeRequest = {
+        id: route.id,
+        start: fromEquip.coordinates,
+        end: toEquip.coordinates
+      };
+
+      const calculatedRoutes = await calculateMultipleRoutes([routeRequest]);
+      
+      if (calculatedRoutes.length > 0) {
+        const calculated = calculatedRoutes[0];
+        setRoutes(prevRoutes => 
+          prevRoutes.map(r => 
+            r.id === routeId ? {
+              ...r,
+              path: calculated.path,
+              isCalculated: true,
+              distance: calculateDistance(calculated.path)
+            } : r
+          )
+        );
+      }
+    } catch (error) {
+      console.error('Erro ao calcular rota específica:', error);
+      setError('Erro ao calcular a rota selecionada.');
+    } finally {
+      setRoutesLoading(false);
+      // Desativar modo de cálculo após calcular
+      setRouteCalculateMode(false);
+      setSelectedRouteForCalculation(null);
+    }
+  }, [equipments, routes]);
 
   // Função auxiliar para calcular distância da rota
   const calculateDistance = (path: [number, number][]): number => {
@@ -684,6 +739,11 @@ export default function CoreWiseMaps({ onBack }: CoreWiseMapsProps) {
           const { lat, lng } = e.latlng;
           addPointToRoute(editingRoute, [lat, lng]);
         }
+        // Se estiver em modo de cálculo de rota, desativar ao clicar no mapa
+        else if (routeCalculateMode) {
+          setRouteCalculateMode(false);
+          setSelectedRouteForCalculation(null);
+        }
       }
     });
     return null;
@@ -909,7 +969,7 @@ export default function CoreWiseMaps({ onBack }: CoreWiseMapsProps) {
             severity="warning"
             sx={{
               position: 'absolute',
-              top: (error ? 80 : 20) + (routesLoading ? 60 : 0),
+              top: (error ? 80 : 20) + (routesLoading ? 60 : 0) + (routeCalculateMode ? 60 : 0),
               left: '50%',
               transform: 'translateX(-50%)',
               zIndex: 1000,
@@ -921,6 +981,25 @@ export default function CoreWiseMaps({ onBack }: CoreWiseMapsProps) {
                 ? `Editando rota ${editingRoute} - Clique no mapa para adicionar pontos`
                 : 'Modo de edição ativo - Selecione uma rota para editar'
               }
+            </Box>
+          </Alert>
+        )}
+
+        {/* Route calculate mode indicator */}
+        {routeCalculateMode && (
+          <Alert
+            severity="info"
+            sx={{
+              position: 'absolute',
+              top: (error ? 80 : 20) + (routesLoading ? 60 : 0),
+              left: '50%',
+              transform: 'translateX(-50%)',
+              zIndex: 1000,
+            }}
+          >
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <RouteIcon fontSize="small" />
+              Modo de cálculo ativo - Clique em uma conexão para calcular sua rota
             </Box>
           </Alert>
         )}
@@ -1012,9 +1091,16 @@ export default function CoreWiseMaps({ onBack }: CoreWiseMapsProps) {
           {/* Linhas de Rotas com efeito animado de fluxo de dados */}
           {showRoutes && routes.map((route) => {
             const isEditing = editingRoute === route.id;
-            const routeColor = isEditing ? '#ff4b5c' : getRouteColor(route.utilization);
-            const routeWeight = isEditing ? 5 : Math.max(3, route.utilization / 15);
-            const routeOpacity = isEditing ? 1 : 0.8;
+            const isCalculateModeActive = routeCalculateMode;
+            const routeColor = isEditing ? '#ff4b5c' : 
+                               isCalculateModeActive ? '#2196f3' : 
+                               getRouteColor(route.utilization);
+            const routeWeight = isEditing ? 5 : 
+                               isCalculateModeActive ? 4 : 
+                               Math.max(3, route.utilization / 15);
+            const routeOpacity = isEditing ? 1 : 
+                                isCalculateModeActive ? 0.9 : 
+                                0.8;
             
             // Define padrão animado baseado no tipo e utilização - PONTILHADO MENOR COM ESPAÇAMENTO
             const getAnimatedDashArray = () => {
@@ -1049,9 +1135,13 @@ export default function CoreWiseMaps({ onBack }: CoreWiseMapsProps) {
               eventHandlers={{
                 mouseover: (e) => handleRouteMouseEnter(route, e.originalEvent),
                 mouseout: handleRouteMouseLeave,
-                click: () => {
+                click: (e) => {
+                  e.originalEvent.stopPropagation();
                   if (routeEditMode) {
                     setEditingRoute(editingRoute === route.id ? null : route.id);
+                  } else if (routeCalculateMode) {
+                    // Calcular apenas esta rota
+                    calculateSelectedRoute(route.id);
                   }
                 }
               }}
@@ -1372,7 +1462,7 @@ export default function CoreWiseMaps({ onBack }: CoreWiseMapsProps) {
                   </IconButton>
                   </span>
                 </Tooltip>
-                <Tooltip title="Recalcular Rotas por Vias Terrestres">
+                <Tooltip title="Recalcular Todas as Rotas">
                   <span>
                     <IconButton 
                       size="small" 
@@ -1384,6 +1474,29 @@ export default function CoreWiseMaps({ onBack }: CoreWiseMapsProps) {
                       }}
                     >
                       <RouteIcon />
+                    </IconButton>
+                  </span>
+                </Tooltip>
+                <Tooltip title={routeCalculateMode ? "Sair do Modo Cálculo Individual" : "Modo Cálculo Individual de Rotas"}>
+                  <span>
+                    <IconButton 
+                      size="small" 
+                      onClick={() => {
+                        setRouteCalculateMode(!routeCalculateMode);
+                        setSelectedRouteForCalculation(null);
+                        // Se estiver saindo do modo de cálculo, desativar também modo de edição
+                        if (routeCalculateMode) {
+                          setRouteEditMode(false);
+                          setEditingRoute(null);
+                        }
+                      }}
+                      disabled={routesLoading || routes.length === 0}
+                      sx={{ 
+                        color: routeCalculateMode ? '#2196f3' : 'white',
+                        '&:hover': { bgcolor: 'rgba(255,255,255,0.1)' }
+                      }}
+                    >
+                      <TouchApp style={{ fontSize: '16px' }} />
                     </IconButton>
                   </span>
                 </Tooltip>
