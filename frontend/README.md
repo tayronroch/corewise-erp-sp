@@ -67,3 +67,49 @@ export default tseslint.config([
   },
 ])
 ```
+
+## Como testar a renovação do token JWT
+
+
+🧪 Como Testar o Sistema de Refresh Token:
+
+  1. Comandos Disponíveis no Console do Navegador:
+
+  Após fazer login, abra o Console do Navegador (F12) e execute:
+
+  Ver informações do token atual:
+
+  TokenManager.getTokenInfo()
+  Mostra: tempo até expiração, se está próximo de expirar, etc.
+
+  Testar refresh manual:
+
+  TokenManager.testRefresh()
+  Faz: refresh manual e mostra antes/depois
+
+  Simular token próximo da expiração:
+
+  TokenManager.forceExpiringSoon()
+  Simula: situação onde token está próximo de expirar
+
+  Verificar status do timer:
+
+  TokenManager.debugTimerStatus()
+  Mostra: se o timer automático está ativo
+
+  2. Sequência de Teste Sugerida:
+
+  1. Login normalmente no sistema
+  2. Abrir Console (F12 → Console)
+  3. Executar:
+  // 1. Ver info do token
+  TokenManager.getTokenInfo()
+
+  // 2. Testar refresh manual
+  TokenManager.testRefresh()
+
+  // 3. Ver novo token após refresh
+  TokenManager.getTokenInfo()
+
+  // 4. Verificar timer automático
+  TokenManager.debugTimerStatus()

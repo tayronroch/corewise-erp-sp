@@ -69,7 +69,7 @@ class TokenManager {
     }
 
     try {
-      console.log('🔄 Renovando token de acesso...');
+      console.log('Renovando token de acesso...');
       
       const response = await axios.post(buildApiUrl(API_CONFIG.ENDPOINTS.AUTH.REFRESH), {
         refresh: refreshToken
@@ -81,7 +81,7 @@ class TokenManager {
       localStorage.setItem('access_token', access);
       api.defaults.headers.common['Authorization'] = `Bearer ${access}`;
       
-      console.log('✅ Token renovado com sucesso');
+      console.log('Token renovado com sucesso');
       
       // Programar próxima verificação
       this.scheduleNextRefresh(access);
@@ -108,7 +108,7 @@ class TokenManager {
     // Programar para verificar 6 minutos antes da expiração
     const checkTime = Math.max((timeUntilExpiry - 360) * 1000, 60000); // Mínimo de 1 minuto
     
-    console.log(`🕒 Próxima verificação de token em ${Math.round(checkTime / 60000)} minutos`);
+    console.log(`Próxima verificação de token em ${Math.round(checkTime / 60000)} minutos`);
     
     this.refreshTimer = setTimeout(() => {
       this.checkAndRefreshToken();
@@ -124,7 +124,7 @@ class TokenManager {
     }
 
     if (this.isTokenExpired(accessToken)) {
-      console.log('🔒 Token expirado, fazendo logout...');
+      console.log('Token expirado, fazendo logout...');
       this.logout();
       return;
     }
@@ -171,6 +171,67 @@ class TokenManager {
       clearTimeout(this.refreshTimer);
       this.refreshTimer = null;
     }
+  }
+
+  // Funções de teste e debug
+  static getTokenInfo(): any {
+    const accessToken = localStorage.getItem('access_token');
+    if (!accessToken) return { error: 'No access token found' };
+
+    const payload = this.decodeJWT(accessToken);
+    if (!payload) return { error: 'Invalid token format' };
+
+    const now = Math.floor(Date.now() / 1000);
+    const timeUntilExpiry = payload.exp - now;
+    const expiryDate = new Date(payload.exp * 1000);
+
+    return {
+      issuedAt: new Date(payload.iat * 1000).toLocaleString(),
+      expiresAt: expiryDate.toLocaleString(),
+      timeUntilExpiry: Math.round(timeUntilExpiry / 60), // em minutos
+      isExpiringSoon: this.isTokenExpiringSoon(accessToken),
+      isExpired: this.isTokenExpired(accessToken),
+      payload: payload
+    };
+  }
+
+  static async testRefresh(): Promise<void> {
+    console.log('TESTE - Iniciando teste manual de refresh...');
+    console.log('TESTE - Token atual:', this.getTokenInfo());
+    
+    try {
+      await this.refreshAccessToken();
+      console.log('TESTE - Refresh realizado com sucesso!');
+      console.log('TESTE - Novo token:', this.getTokenInfo());
+    } catch (error) {
+      console.error('TESTE - Erro no refresh:', error);
+    }
+  }
+
+  static forceExpiringSoon(): void {
+    console.log('TESTE - Forçando token próximo da expiração...');
+    const accessToken = localStorage.getItem('access_token');
+    if (!accessToken) {
+      console.log('TESTE - Nenhum token encontrado');
+      return;
+    }
+
+    // Parar timer atual
+    this.stopAutoRefresh();
+
+    // Forçar verificação imediata (simula token próximo da expiração)
+    setTimeout(() => {
+      console.log('TESTE - Simulando verificação de token próximo da expiração...');
+      this.checkAndRefreshToken();
+    }, 1000);
+  }
+
+  static debugTimerStatus(): void {
+    console.log('DEBUG - Status do timer:', {
+      hasTimer: !!this.refreshTimer,
+      hasRefreshPromise: !!this.refreshPromise,
+      tokenInfo: this.getTokenInfo()
+    });
   }
 }
 
@@ -251,6 +312,11 @@ api.interceptors.response.use(
     return Promise.reject(error);
   }
 );
+
+// Disponibilizar TokenManager globalmente para testes no console
+if (typeof window !== 'undefined') {
+  (window as any).TokenManager = TokenManager;
+}
 
 export { api, TokenManager };
 export default api; 
