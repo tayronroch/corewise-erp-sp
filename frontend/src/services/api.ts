@@ -70,8 +70,8 @@ class TokenManager {
     }
 
     try {
-      console.log('🔄 Renovando token de acesso...');
-      console.log('🔑 Refresh token usado:', refreshToken.substring(0, 20) + '...');
+      console.log('Renovando token de acesso...');
+      console.log('Refresh token usado:', refreshToken.substring(0, 20) + '...');
       
       const response = await axios.post(buildApiUrl(API_CONFIG.ENDPOINTS.AUTH.REFRESH), {
         refresh: refreshToken
@@ -85,18 +85,18 @@ class TokenManager {
       
       // ⚠️ IMPORTANTE: Se o backend retornar um novo refresh token, atualizá-lo
       if (newRefresh && newRefresh !== refreshToken) {
-        console.log('🔄 Atualizando refresh token...');
+        console.log('Atualizando refresh token...');
         localStorage.setItem('refresh_token', newRefresh);
       }
       
-      console.log('✅ Token renovado com sucesso');
+      console.log('Token renovado com sucesso');
       
       // Programar próxima verificação
       this.scheduleNextRefresh(access);
       
     } catch (error) {
-      console.error('❌ Erro ao renovar token:', error);
-      console.log('🔑 Refresh token que falhou:', refreshToken.substring(0, 20) + '...');
+      console.error('Erro ao renovar token:', error);
+      console.log('Refresh token que falhou:', refreshToken.substring(0, 20) + '...');
       this.logout();
     }
   }
@@ -295,7 +295,10 @@ api.interceptors.response.use(
   async (error) => {
     const originalRequest = error.config;
 
-    if (error.response?.status === 401 && !originalRequest._retry) {
+    // Não interceptar erros de login para evitar redirecionamentos indesejados
+    const isLoginRequest = originalRequest.url?.includes('/api/core/auth/login');
+    
+    if (error.response?.status === 401 && !originalRequest._retry && !isLoginRequest) {
       originalRequest._retry = true;
 
       try {
@@ -314,8 +317,8 @@ api.interceptors.response.use(
       }
     }
 
-    if (error.response?.status === 401) {
-      // Redirecionar para login se não autenticado
+    if (error.response?.status === 401 && !isLoginRequest) {
+      // Redirecionar para login se não autenticado, mas não em tentativas de login
       TokenManager.logout();
     }
     return Promise.reject(error);

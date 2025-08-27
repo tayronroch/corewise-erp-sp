@@ -39,7 +39,6 @@ const ParticlesBackground = React.memo(() => {
 
   // Configuração do efeito de galáxia/constelação - memoizada
   const particlesOptions = useMemo(() => ({
-    background: { color: 'transparent' },
     fpsLimit: 60,
     interactivity: {
       events: {
