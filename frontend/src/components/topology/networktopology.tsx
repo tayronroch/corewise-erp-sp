@@ -25,7 +25,6 @@ import {
   ListItem,
   ListItemText,
   Chip,
-  Button,
   Tooltip,
   Switch,
   FormControlLabel,
@@ -521,6 +520,8 @@ export default function NetworkTopology({ onBack }: NetworkTopologyProps) {
         <L2VPNConfiguration
           leftDrawerOpen={false}
           rightDrawerOpen={true}
+          selectedHostLeft={null}
+          selectedHostRight={null}
           onClose={() => setShowL2VPNConfig(false)}
         />
       )}

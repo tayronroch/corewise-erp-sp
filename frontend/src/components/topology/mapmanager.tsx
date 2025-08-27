@@ -69,7 +69,6 @@ import { networkAutomationService, type NetworkDevice, type SSHExecutionResult }
 import DebugPanel from '../debug/debug-panel';
 import ZabbixConfigDialog from '../monitoring/zabbix-config-dialog';
 import { HostMonitoringPanel } from '../monitoring/host-monitoring-panel';
-import MapLoaderDebug from './map-loader-debug';
 import L2VPNConfiguration from '../networking/l2vpn-configuration';
 
 // Fix icon imports
@@ -1372,13 +1371,6 @@ export const MapManager: React.FC<MapManagerProps> = ({ onBack }) => {
               Debug
             </Button>
             
-            <Button
-              onClick={() => setShowMapLoaderDebug(!showMapLoaderDebug)}
-              startIcon={<Apps />}
-              color="secondary"
-            >
-              Loader
-            </Button>
           </ButtonGroup>
 
           {/* Indicadores de hosts selecionados */}
@@ -2401,29 +2393,7 @@ export const MapManager: React.FC<MapManagerProps> = ({ onBack }) => {
 
       {/* Map Loader Debug */}
       {showMapLoaderDebug && (
-        <MapLoaderDebug 
-          onLoadMap={async (map) => {
-            console.log('🔄 Carregando mapa do debug:', map.name);
-            // Fechar o debug panel
-            setShowMapLoaderDebug(false);
-            
-            // Adicionar à lista de mapas disponíveis se não existir
-            setAvailableMaps(prev => {
-              const exists = prev.find(m => m.id === map.id);
-              if (!exists) {
-                return [...prev, map];
-              }
-              return prev;
-            });
-            
-            // Carregar o mapa
-            setSelectedMapId(map.id);
-            const success = await loadMap(map.id);
-            if (success) {
-              console.log('✅ Mapa carregado com sucesso no MapManager');
-            }
-          }}
-        />
+        <div>Map Loader Debug - Em desenvolvimento</div>
       )}
 
       {/* Zabbix Configuration Dialog */}
