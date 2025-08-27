@@ -47,7 +47,7 @@ const MplsAnalyzerDashboard: React.FC<MplsAnalyzerDashboardProps> = ({ onBack })
 
       <main className="max-w-7xl mx-auto px-4 py-6">
         <div className="flex items-center gap-2 mb-4">
-          <TabButton active={activeTab==='search'} onClick={()=>setActiveTab('search')}>Busca Inteligente</TabButton>
+          <TabButton active={activeTab==='search'} onClick={()=>setActiveTab('search')}>🚀 Busca Inteligente (Otimizada)</TabButton>
           <TabButton active={activeTab==='reports'} onClick={()=>setActiveTab('reports')}>Relatórios de Cliente</TabButton>
         </div>
 
