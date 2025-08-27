@@ -464,7 +464,7 @@ export default function CoreWiseMaps({ onBack }: CoreWiseMapsProps) {
         end: toEquip.coordinates
       };
 
-      const calculatedRoutes = await calculateMultipleRoutes([routeRequest]);
+      const calculatedRoutes = await calculateMultipleRoutes([routeRequest], true);
       
       if (calculatedRoutes.length > 0) {
         const calculated = calculatedRoutes[0];

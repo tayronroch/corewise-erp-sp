@@ -115,15 +115,22 @@ const apiStats = {
 export const calculateRoadRoute = async (
   start: [number, number], // [lat, lng]
   end: [number, number],   // [lat, lng]
-  profile: 'drive' | 'bicycle' | 'walk' = 'drive'
+  profile: 'drive' | 'bicycle' | 'walk' = 'drive',
+  forceRecalculate: boolean = false
 ): Promise<[number, number][]> => {
   const cacheKey = `${start[0]},${start[1]}-${end[0]},${end[1]}-${profile}`;
   
-  // ✅ Verificar cache primeiro
-  if (routeCache.has(cacheKey)) {
+  // ✅ Verificar cache primeiro (apenas se não forçar recálculo)
+  if (!forceRecalculate && routeCache.has(cacheKey)) {
     const cached = routeCache.get(cacheKey)!;
     console.log(`📦 Rota ${profile} encontrada no cache (${cached.source})`);
     return cached.coordinates;
+  }
+
+  // 🗑️ Limpar cache se forçar recálculo
+  if (forceRecalculate && routeCache.has(cacheKey)) {
+    routeCache.delete(cacheKey);
+    console.log(`🗑️ Cache limpo para recálculo forçado`);
   }
 
   console.log(`🚗 Calculando rota ${profile}:`, { start, end });
@@ -697,16 +704,18 @@ const getDistanceBetweenPoints = (
  * 🚀 Calcula múltiplas rotas em paralelo
  */
 export const calculateMultipleRoutes = async (
-  routes: Array<{ start: [number, number]; end: [number, number]; id: string; profile?: string }>
+  routes: Array<{ start: [number, number]; end: [number, number]; id: string; profile?: string }>,
+  forceRecalculate: boolean = false
 ): Promise<Array<{ id: string; path: [number, number][]; method?: string; source?: string }>> => {
-  console.log(`🚀 Calculando ${routes.length} rotas em paralelo...`);
+  console.log(`🚀 Calculando ${routes.length} rotas em paralelo...${forceRecalculate ? ' (FORÇANDO RECÁLCULO)' : ''}`);
   
   const promises = routes.map(async (route) => {
     try {
       const path = await calculateRoadRoute(
         route.start, 
         route.end, 
-        route.profile as any || 'drive'
+        route.profile as any || 'drive',
+        forceRecalculate
       );
       
       const cacheKey = `${route.start[0]},${route.start[1]}-${route.end[0]},${route.end[1]}-${route.profile || 'drive'}`;

@@ -1349,7 +1349,7 @@ export const TopologyManager: React.FC<TopologyManagerProps> = ({ onBack }) => {
         end: [targetNode.position.latitude, targetNode.position.longitude] as [number, number],
       };
 
-      const calculatedRoutes = await calculateMultipleRoutes([routeRequest]);
+      const calculatedRoutes = await calculateMultipleRoutes([routeRequest], true);
       
       if (calculatedRoutes.length > 0) {
         const calculated = calculatedRoutes[0];
@@ -1625,20 +1625,6 @@ export const TopologyManager: React.FC<TopologyManagerProps> = ({ onBack }) => {
             
             return (
               <Box sx={{ mr: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
-                <Button
-                  onClick={() => calculateRealRoutes(project.connections)}
-                  startIcon={routesLoading ? <CircularProgress size={16} /> : <RouteIcon />}
-                  disabled={routesLoading || routeCalculateMode}
-                  variant="contained"
-                  color="success"
-                  size="medium"
-                >
-                  {routesLoading ? 'Calculando...' : 
-                    uncalculatedRoutes.length > 0 
-                      ? `Calcular Todas (${uncalculatedRoutes.length})`
-                      : 'Recalcular Todas'
-                  }
-                </Button>
                 <Button
                   onClick={() => {
                     setRouteCalculateMode(!routeCalculateMode);
